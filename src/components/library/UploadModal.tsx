@@ -1,0 +1,196 @@
+"use client";
+
+import { useState, useRef, useCallback, useMemo } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { addBook } from "@/lib/supabase/queries/books";
+import { storeEpub } from "@/lib/epub-cache";
+import ePub from "epubjs";
+
+interface UploadModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+export default function UploadModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: UploadModalProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const supabase = useMemo(() => createClient(), []);
+
+  const processFile = useCallback(
+    async (file: File) => {
+      if (!file.name.toLowerCase().endsWith(".epub")) {
+        setError("Please select an EPUB file");
+        return;
+      }
+
+      if (file.size > 100 * 1024 * 1024) {
+        setError("File size must be under 100MB");
+        return;
+      }
+
+      setUploading(true);
+      setError(null);
+
+      try {
+        setStatus("Caching file locally...");
+        const fileHash = await storeEpub(file);
+
+        setStatus("Extracting metadata...");
+        const arrayBuffer = await file.arrayBuffer();
+        const book = ePub(arrayBuffer);
+        await book.ready;
+
+        const metadata = await book.loaded.metadata;
+        let coverUrl: string | null = null;
+
+        try {
+          const coverHref = await book.coverUrl();
+          if (coverHref) {
+            const response = await fetch(coverHref);
+            const blob = await response.blob();
+            coverUrl = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch {
+        }
+
+        setStatus("Saving to library...");
+        const result = await addBook(supabase, {
+          title: metadata.title || file.name.replace(".epub", ""),
+          author: metadata.creator || null,
+          cover_url: coverUrl,
+          file_hash: fileHash,
+          source: "upload",
+          file_size: file.size,
+          metadata: {
+            publisher: metadata.publisher,
+            language: metadata.language,
+            description: metadata.description,
+          },
+        });
+
+        if (result) {
+          book.destroy();
+          onSuccess();
+        } else {
+          setError("Failed to save book metadata");
+        }
+      } catch (err) {
+        console.error("Upload error:", err);
+        setError("Failed to process EPUB file");
+      } finally {
+        setUploading(false);
+        setStatus("");
+      }
+    },
+    [supabase, onSuccess]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files[0];
+      if (file) processFile(file);
+    },
+    [processFile]
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) processFile(file);
+    },
+    [processFile]
+  );
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+        onClick={onClose}
+      />
+
+      <div className="relative w-full max-w-lg bg-bg-secondary border border-border rounded-md shadow-2xl animate-scale-in">
+        <div className="flex items-center justify-between p-6 pb-0">
+          <h2 className="text-lg font-semibold text-text-primary">
+            Upload EPUB
+          </h2>
+          <button
+            onClick={onClose}
+            disabled={uploading}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+          >
+            <span className="material-symbols-rounded">close</span>
+          </button>
+        </div>
+
+        <div className="p-6">
+          {error && (
+            <div className="mb-4 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2 animate-slide-up">
+              <span className="material-symbols-rounded sm">error</span>
+              {error}
+            </div>
+          )}
+
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => !uploading && fileInputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-md p-10 text-center transition-all duration-200 cursor-pointer ${
+              isDragging
+                ? "border-accent bg-accent/5"
+                : "border-border hover:border-border-hover hover:bg-bg-elevated/50"
+            } ${uploading ? "pointer-events-none opacity-60" : ""}`}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".epub"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {uploading ? (
+              <div className="flex flex-col items-center gap-3">
+                <span className="material-symbols-rounded text-accent animate-spin !text-[36px]">
+                  progress_activity
+                </span>
+                <p className="text-sm text-text-secondary">{status}</p>
+              </div>
+            ) : (
+              <>
+                <span className="material-symbols-rounded text-text-tertiary !text-[40px] mb-3 block">
+                  upload_file
+                </span>
+                <p className="text-sm text-text-primary font-medium mb-1">
+                  Drop your EPUB here, or click to browse
+                </p>
+                <p className="text-xs text-text-tertiary">
+                  EPUB files up to 100MB
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

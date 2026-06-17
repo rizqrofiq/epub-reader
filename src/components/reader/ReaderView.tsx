@@ -1,0 +1,594 @@
+"use client";
+
+import {
+  useEffect,
+  useCallback,
+  useRef,
+  useState,
+  useMemo,
+  type MutableRefObject,
+} from "react";
+import dynamic from "next/dynamic";
+import type { Highlight } from "@/lib/supabase/types";
+import type {
+  ReaderTheme,
+  FontFamily,
+  LineHeight,
+  PageLayout,
+} from "@/stores/reader-store";
+import HighlightPopover from "./HighlightPopover";
+
+const ReactReader = dynamic(
+  () => import("react-reader").then((m) => m.ReactReader),
+  { ssr: false },
+);
+
+let cachedDefaultStyles: Record<string, React.CSSProperties> | null = null;
+function useReactReaderStyles() {
+  const [styles, setStyles] = useState(cachedDefaultStyles);
+  useEffect(() => {
+    if (!cachedDefaultStyles) {
+      import("react-reader").then((m) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        cachedDefaultStyles = (m as any).ReactReaderStyle || null;
+        setStyles(cachedDefaultStyles);
+      });
+    }
+  }, []);
+  return styles;
+}
+
+interface ReaderViewProps {
+  url: string | ArrayBuffer;
+  location: string | number | null;
+  onLocationChange: (loc: string | number) => void;
+  onProgressUpdate: (
+    cfi: string,
+    percentage: number,
+    chapterLabel: string,
+  ) => void;
+  theme: ReaderTheme;
+  fontSize: number;
+  fontFamily: FontFamily;
+  lineHeight: LineHeight;
+  layout: PageLayout;
+  highlights: Highlight[];
+  onAddHighlight: (
+    cfiRange: string,
+    text: string,
+    color: string,
+    note?: string,
+  ) => void;
+  onTocLoaded: (toc: Array<{ label: string; href: string }>) => void;
+  renditionRef: MutableRefObject<unknown>;
+  cachedLocations?: string;
+  onLocationsGenerated?: (locations: string) => void;
+}
+
+const LINE_HEIGHT_MAP: Record<LineHeight, string> = {
+  compact: "1.4",
+  normal: "1.7",
+  relaxed: "2.0",
+};
+
+const THEME_STYLES: Record<ReaderTheme, { body: Record<string, string> }> = {
+  dark: {
+    body: {
+      background: "#0f0f0f !important",
+      color: "#f2f2f2 !important",
+    },
+  },
+  light: {
+    body: {
+      background: "#fafafa !important",
+      color: "#171717 !important",
+    },
+  },
+  sepia: {
+    body: {
+      background: "#e2d5b7 !important",
+      color: "#3d2e1a !important",
+    },
+  },
+};
+
+export default function ReaderView({
+  url,
+  location,
+  onLocationChange,
+  onProgressUpdate,
+  theme,
+  fontSize,
+  fontFamily,
+  lineHeight,
+  layout,
+  highlights,
+  onAddHighlight,
+  onTocLoaded,
+  renditionRef,
+  cachedLocations,
+  onLocationsGenerated,
+}: ReaderViewProps) {
+  const [selection, setSelection] = useState<{
+    cfiRange: string;
+    text: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const tocLoadedRef = useRef(false);
+
+  useEffect(() => {
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      if (args.length === 0) return;
+      const first = args[0];
+      if (typeof first === "number") return;
+      if (
+        typeof first === "object" &&
+        first !== null &&
+        !(first instanceof Error)
+      ) {
+        const keys = Object.keys(first);
+        if (keys.length === 0) return;
+        if ("message" in first) {
+          const m = String((first as Record<string, unknown>).message);
+          if (
+            m.includes("File not found") ||
+            m.includes("not found") ||
+            m.includes("Failed to load")
+          )
+            return;
+        }
+      }
+      if (
+        typeof first === "string" &&
+        (first.includes("File not found") ||
+          first.includes("No Section Found") ||
+          first.includes("Failed to load"))
+      )
+        return;
+      originalConsoleError.apply(console, args);
+    };
+
+    const rejectionHandler = (event: PromiseRejectionEvent) => {
+      const msg = event.reason?.message || String(event.reason);
+      if (msg.includes("No Section Found") || msg.includes("File not found")) {
+        event.preventDefault();
+        onLocationChange(0);
+      }
+    };
+    window.addEventListener("unhandledrejection", rejectionHandler);
+
+    return () => {
+      console.error = originalConsoleError;
+      window.removeEventListener("unhandledrejection", rejectionHandler);
+    };
+  }, [onLocationChange]);
+
+  const applyStyles = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (rendition: any) => {
+      if (!rendition) return;
+
+      const fontFam =
+        fontFamily === "serif"
+          ? "'Newsreader', Georgia, serif"
+          : "'Instrument Sans', system-ui, sans-serif";
+
+      rendition.themes.override("font-size", `${fontSize}px`, true);
+      rendition.themes.override("font-family", fontFam, true);
+      rendition.themes.override(
+        "line-height",
+        LINE_HEIGHT_MAP[lineHeight],
+        true,
+      );
+
+      const themeStyle = THEME_STYLES[theme];
+      rendition.themes.default({
+        body: {
+          ...themeStyle.body,
+          "font-size": `${fontSize}px !important`,
+          "font-family": `${fontFam} !important`,
+          "line-height": `${LINE_HEIGHT_MAP[lineHeight]} !important`,
+          padding: "0 20px !important",
+        },
+        "p, div, span, li, td, th, h1, h2, h3, h4, h5, h6": {
+          color: `${themeStyle.body.color}`,
+          "font-family": `${fontFam} !important`,
+          "line-height": `${LINE_HEIGHT_MAP[lineHeight]} !important`,
+        },
+        a: {
+          color: "#3ECF8E !important",
+        },
+        img: {
+          "max-width": "100% !important",
+          height: "auto !important",
+        },
+      });
+    },
+    [theme, fontSize, fontFamily, lineHeight],
+  );
+
+  const applyHighlights = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (rendition: any) => {
+      if (!rendition) return;
+      try {
+        highlights.forEach((hl) => {
+          try {
+            rendition.annotations.remove(hl.cfi_range, "highlight");
+          } catch {
+          }
+        });
+      } catch {
+      }
+      highlights.forEach((hl) => {
+        try {
+          rendition.annotations.add(
+            "highlight",
+            hl.cfi_range,
+            {},
+            undefined,
+            "hl",
+            {
+              fill: hl.color || "#3ECF8E",
+              "fill-opacity": "0.3",
+              "mix-blend-mode": "multiply",
+            },
+          );
+        } catch {
+        }
+      });
+    },
+    [highlights],
+  );
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rendition = renditionRef.current as any;
+    if (rendition) {
+      applyStyles(rendition);
+    }
+  }, [theme, fontSize, fontFamily, lineHeight, applyStyles, renditionRef]);
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rendition = renditionRef.current as any;
+    if (rendition) {
+      applyHighlights(rendition);
+    }
+  }, [highlights, applyHighlights, renditionRef]);
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rendition = renditionRef.current as any;
+    if (rendition?.spread) {
+      rendition.spread(layout === "double" ? "auto" : "none", 800);
+    }
+  }, [layout, renditionRef]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleRendition = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (rendition: any) => {
+      renditionRef.current = rendition;
+      applyStyles(rendition);
+
+      rendition.book.ready
+        .then(() => {
+          if (cachedLocations) {
+            rendition.book.locations.load(cachedLocations);
+            return null;
+          } else {
+            return rendition.book.locations.generate(1600);
+          }
+        })
+        .then((locations: unknown) => {
+          if (locations && onLocationsGenerated) {
+            onLocationsGenerated(rendition.book.locations.save());
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn("Failed to process locations", err);
+        });
+
+      if (!tocLoadedRef.current) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rendition.book.loaded.navigation.then((nav: any) => {
+          const tocItems = nav.toc.map(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (item: any) => ({
+              label: item.label?.trim() || "Untitled",
+              href: item.href,
+            }),
+          );
+          onTocLoaded(tocItems);
+          tocLoadedRef.current = true;
+        });
+      }
+
+      rendition.on(
+        "selected",
+        (cfiRange: string, contents: { window: Window }) => {
+          const sel = contents.window.getSelection();
+          if (!sel || sel.rangeCount === 0) return;
+
+          const text = sel.toString().trim();
+          if (!text) return;
+
+          const range = sel.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+
+          const iframe = document.querySelector("iframe");
+          const iframeRect = iframe?.getBoundingClientRect() || {
+            left: 0,
+            top: 0,
+          };
+
+          setSelection({
+            cfiRange,
+            text,
+            x: rect.left + iframeRect.left + rect.width / 2,
+            y: rect.top + iframeRect.top - 10,
+          });
+        },
+      );
+
+      rendition.on("rendered", () => {
+        applyHighlights(rendition);
+      });
+    },
+    [applyStyles, applyHighlights, onTocLoaded, renditionRef],
+  );
+
+  const handleLocationChanged = useCallback(
+    (epubcifi: string | number) => {
+      onLocationChange(epubcifi);
+
+      if (typeof epubcifi !== "string" || !epubcifi.startsWith("epubcfi(")) {
+        return;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rendition = renditionRef.current as any;
+      if (!rendition) return;
+
+      try {
+        const loc = rendition.currentLocation();
+        if (!loc || !loc.start) return;
+
+        let percentage = loc.start.percentage || 0;
+        let chapterLabel = "";
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const book = rendition.book as any;
+
+        if (book && book.locations && book.locations.length() > 0) {
+          percentage = book.locations.percentageFromCfi(epubcifi);
+          const totalPages = book.locations.length();
+          const currentPage = book.locations.locationFromCfi(epubcifi);
+          if (currentPage && totalPages) {
+            chapterLabel = `Page ${currentPage} of ${totalPages}`;
+          }
+        } else if (loc.start.displayed) {
+          chapterLabel = `Page ${loc.start.displayed.page || 0} of ${loc.start.displayed.total || 0}`;
+        }
+
+        onProgressUpdate(epubcifi, percentage, chapterLabel);
+      } catch {
+      }
+    },
+    [onLocationChange, onProgressUpdate, renditionRef],
+  );
+
+  const handleHighlight = useCallback(
+    (color: string) => {
+      if (!selection) return;
+      onAddHighlight(selection.cfiRange, selection.text, color);
+
+      const iframe = document.querySelector("iframe");
+      if (iframe?.contentWindow) {
+        iframe.contentWindow.getSelection()?.removeAllRanges();
+      }
+      setSelection(null);
+    },
+    [selection, onAddHighlight],
+  );
+
+  const handleCopy = useCallback(() => {
+    if (!selection) return;
+    navigator.clipboard.writeText(selection.text);
+    setSelection(null);
+  }, [selection]);
+
+  const handleBookmarkSelection = useCallback(() => {
+    if (!selection) return;
+    onAddHighlight(selection.cfiRange, selection.text, "#3ECF8E");
+    setSelection(null);
+  }, [selection, onAddHighlight]);
+
+  const themeBg =
+    theme === "dark" ? "#0f0f0f" : theme === "sepia" ? "#e2d5b7" : "#fafafa";
+  const arrowColor =
+    theme === "dark" ? "#666" : theme === "sepia" ? "#8b7355" : "#999";
+
+  return (
+    <div className="h-full relative">
+      <ReactReader
+        url={url}
+        location={location ?? null}
+        locationChanged={handleLocationChanged}
+        getRendition={handleRendition}
+        epubOptions={{
+          flow: "paginated",
+          manager: "default",
+          spread: layout === "double" ? "auto" : "none",
+          minSpreadWidth: 800,
+          allowPopups: true,
+          allowScriptedContent: false,
+        }}
+        readerStyles={{
+          container: {
+            overflow: "hidden",
+            position: "relative",
+            height: "100%",
+            backgroundColor: themeBg,
+          },
+          readerArea: {
+            position: "relative",
+            zIndex: 1,
+            height: "100%",
+            width: "100%",
+            backgroundColor: themeBg,
+            transition: "all .3s ease",
+          },
+          containerExpanded: {
+            transform: "translateX(256px)",
+          },
+          titleArea: {
+            position: "absolute",
+            top: 20,
+            left: 50,
+            right: 50,
+            textAlign: "center",
+            color: arrowColor,
+            display: "none",
+          },
+          reader: {
+            position: "absolute",
+            top: 64,
+            left: 50,
+            bottom: 20,
+            right: 50,
+          },
+          swipeWrapper: {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: 0,
+            zIndex: 200,
+          },
+          prev: {
+            left: 1,
+            zIndex: 100,
+          },
+          next: {
+            right: 1,
+            zIndex: 100,
+          },
+          arrow: {
+            outline: "none",
+            border: "none",
+            background: "none",
+            position: "absolute",
+            top: "50%",
+            marginTop: "-32px",
+            fontSize: "40px",
+            padding: "10px",
+            color: arrowColor,
+            fontFamily: "arial, sans-serif",
+            cursor: "pointer",
+            userSelect: "none",
+            appearance: "none",
+            fontWeight: "normal",
+          },
+          arrowHover: {
+            color: theme === "dark" ? "#999" : "#333",
+          },
+          tocArea: {
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 0,
+            width: 256,
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            background: "#1a1a1a",
+            padding: "10px 0",
+            display: "none",
+          },
+          tocAreaButton: {
+            userSelect: "none",
+            appearance: "none",
+            background: "none",
+            border: "none",
+            display: "block",
+            fontFamily: "sans-serif",
+            width: "100%",
+            fontSize: ".9em",
+            textAlign: "left",
+            padding: ".9em 1em",
+            borderBottom: "1px solid #333",
+            color: "#ccc",
+            boxSizing: "border-box",
+            outline: "none",
+            cursor: "pointer",
+          },
+          tocButton: {
+            display: "none",
+          },
+          tocButtonExpanded: {},
+          tocButtonBar: {
+            position: "absolute",
+            width: "60%",
+            background: "#ccc",
+            height: 2,
+            left: "50%",
+            margin: "-1px -30%",
+            top: "50%",
+            transition: "all .5s ease",
+          },
+          tocButtonBarTop: {
+            top: "35%",
+          },
+          loadingView: {
+            position: "absolute",
+            top: "50%",
+            left: "10%",
+            right: "10%",
+            color: arrowColor,
+            textAlign: "center",
+            marginTop: "-.5em",
+          },
+          errorView: {
+            position: "absolute",
+            top: "50%",
+            left: "10%",
+            right: "10%",
+            color: arrowColor,
+            textAlign: "center",
+            marginTop: "-.5em",
+          },
+          tocBackground: {
+            display: "none",
+          },
+          toc: {
+            display: "none",
+          },
+          tocButtonBottom: {
+            display: "none",
+          },
+        }}
+      />
+
+      <HighlightPopover
+        x={selection?.x || 0}
+        y={selection?.y || 0}
+        isVisible={!!selection}
+        onHighlight={handleHighlight}
+        onBookmark={handleBookmarkSelection}
+        onCopy={handleCopy}
+        onAddNote={(color) => {
+          const note = prompt("Add a note:");
+          if (note && selection) {
+            onAddHighlight(selection.cfiRange, selection.text, color, note);
+            setSelection(null);
+          }
+        }}
+        onClose={() => setSelection(null)}
+      />
+    </div>
+  );
+}
