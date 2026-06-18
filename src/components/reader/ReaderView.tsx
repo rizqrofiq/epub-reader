@@ -17,6 +17,7 @@ import type {
   PageLayout,
 } from "@/stores/reader-store";
 import HighlightPopover from "./HighlightPopover";
+import NoteModal from "./NoteModal";
 
 const ReactReader = dynamic(
   () => import("react-reader").then((m) => m.ReactReader),
@@ -166,6 +167,11 @@ export default function ReaderView({
     text: string;
     x: number;
     y: number;
+  } | null>(null);
+  const [noteDraft, setNoteDraft] = useState<{
+    cfiRange: string;
+    text: string;
+    color: string;
   } | null>(null);
   const tocLoadedRef = useRef(false);
 
@@ -642,13 +648,28 @@ export default function ReaderView({
         onBookmark={handleBookmarkSelection}
         onCopy={handleCopy}
         onAddNote={(color) => {
-          const note = prompt("Add a note:");
-          if (note && selection) {
-            onAddHighlight(selection.cfiRange, selection.text, color, note);
-            setSelection(null);
-          }
+          if (!selection) return;
+          setNoteDraft({
+            cfiRange: selection.cfiRange,
+            text: selection.text,
+            color,
+          });
+          setSelection(null);
         }}
         onClose={() => setSelection(null)}
+      />
+
+      <NoteModal
+        isOpen={!!noteDraft}
+        selectedText={noteDraft?.text || ""}
+        initialColor={noteDraft?.color || "#3ECF8E"}
+        onSave={(note, color) => {
+          if (noteDraft) {
+            onAddHighlight(noteDraft.cfiRange, noteDraft.text, color, note);
+          }
+          setNoteDraft(null);
+        }}
+        onClose={() => setNoteDraft(null)}
       />
     </div>
   );
