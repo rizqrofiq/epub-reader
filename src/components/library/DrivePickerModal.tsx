@@ -29,16 +29,21 @@ export default function DrivePickerModal({
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.provider_token;
+      const tokenRes = await fetch("/api/drive/token");
 
-      if (!accessToken) {
+      if (!tokenRes.ok) {
+        const { error: tokenError } = await tokenRes
+          .json()
+          .catch(() => ({ error: null }));
         setError(
-          "Google Drive access token not found. Please sign out and sign in again with Google."
+          tokenError ||
+            "Google Drive access token not found. Please sign out and sign in again with Google."
         );
         setLoading(false);
         return;
       }
+
+      const { access_token: accessToken } = await tokenRes.json();
 
       setStatus("Opening Google Drive...");
       const fileResult = await openDrivePicker(accessToken);

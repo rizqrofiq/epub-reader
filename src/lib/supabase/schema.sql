@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS public.bookmarks (
 );
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_book ON public.bookmarks(user_id, book_id);
 
+-- Google OAuth credentials (Drive refresh token, captured at sign-in)
+CREATE TABLE IF NOT EXISTS public.google_credentials (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  refresh_token TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ============================================
 -- Row Level Security
 -- ============================================
@@ -83,6 +90,7 @@ ALTER TABLE public.reading_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.read_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.highlights ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.google_credentials ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users manage own books" ON public.books
   FOR ALL USING (auth.uid() = user_id);
@@ -97,4 +105,7 @@ CREATE POLICY "Users manage own highlights" ON public.highlights
   FOR ALL USING (auth.uid() = user_id);
 
 CREATE POLICY "Users manage own bookmarks" ON public.bookmarks
+  FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Users manage own google credentials" ON public.google_credentials
   FOR ALL USING (auth.uid() = user_id);
