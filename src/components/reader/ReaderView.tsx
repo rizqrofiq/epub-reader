@@ -72,7 +72,8 @@ const LINE_HEIGHT_MAP: Record<LineHeight, string> = {
   relaxed: "2.0",
 };
 
-const MATHJAX_SRC = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
+const MATHJAX_SRC =
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
 
 // Injected into each chapter iframe to typeset MathML/TeX and keep wide
 // display math from overflowing epub.js's paginated columns.
@@ -174,6 +175,9 @@ export default function ReaderView({
     color: string;
   } | null>(null);
   const tocLoadedRef = useRef(false);
+  const highlightsRef = useRef<Highlight[]>(highlights);
+  highlightsRef.current = highlights;
+  const appliedHlRef = useRef<string[]>([]);
 
   useEffect(() => {
     const originalConsoleError = console.error;
@@ -271,16 +275,15 @@ export default function ReaderView({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (rendition: any) => {
       if (!rendition) return;
-      try {
-        highlights.forEach((hl) => {
-          try {
-            rendition.annotations.remove(hl.cfi_range, "highlight");
-          } catch {
-          }
-        });
-      } catch {
-      }
-      highlights.forEach((hl) => {
+      const current = highlightsRef.current;
+
+      appliedHlRef.current.forEach((cfi) => {
+        try {
+          rendition.annotations.remove(cfi, "highlight");
+        } catch {}
+      });
+
+      current.forEach((hl) => {
         try {
           rendition.annotations.add(
             "highlight",
@@ -294,11 +297,24 @@ export default function ReaderView({
               "mix-blend-mode": "multiply",
             },
           );
-        } catch {
-        }
+        } catch {}
       });
+
+      appliedHlRef.current = current.map((hl) => hl.cfi_range);
     },
-    [highlights],
+    [],
+  );
+
+  const redrawTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRedraw = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (rendition: any, delay = 80) => {
+      if (redrawTimerRef.current) clearTimeout(redrawTimerRef.current);
+      redrawTimerRef.current = setTimeout(() => {
+        applyHighlights(rendition);
+      }, delay);
+    },
+    [applyHighlights],
   );
 
   useEffect(() => {
@@ -306,8 +322,17 @@ export default function ReaderView({
     const rendition = renditionRef.current as any;
     if (rendition) {
       applyStyles(rendition);
+      scheduleRedraw(rendition, 150);
     }
-  }, [theme, fontSize, fontFamily, lineHeight, applyStyles, renditionRef]);
+  }, [
+    theme,
+    fontSize,
+    fontFamily,
+    lineHeight,
+    applyStyles,
+    scheduleRedraw,
+    renditionRef,
+  ]);
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -316,6 +341,12 @@ export default function ReaderView({
       applyHighlights(rendition);
     }
   }, [highlights, applyHighlights, renditionRef]);
+
+  useEffect(() => {
+    return () => {
+      if (redrawTimerRef.current) clearTimeout(redrawTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -338,8 +369,7 @@ export default function ReaderView({
         (rendition.getContents() || []).forEach((c: any) =>
           injectMathJaxIntoContents(c),
         );
-      } catch {
-      }
+      } catch {}
 
       rendition.book.ready
         .then(() => {
@@ -401,11 +431,39 @@ export default function ReaderView({
         },
       );
 
-      rendition.on("rendered", () => {
-        applyHighlights(rendition);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rendition.on("rendered", (_section: unknown, view: any) => {
+        scheduleRedraw(rendition, 80);
+
+        const win: (Window & typeof globalThis) | undefined =
+          view?.window || view?.contents?.window;
+        const doc: Document | undefined =
+          view?.document || view?.contents?.document;
+
+        try {
+          win?.document?.fonts?.ready?.then(() =>
+            scheduleRedraw(rendition, 30),
+          );
+        } catch {}
+
+        if (doc?.querySelector("math")) {
+          scheduleRedraw(rendition, 600);
+        }
+
+        if (win && "ResizeObserver" in win && doc?.body) {
+          try {
+            const ro = new win.ResizeObserver(() =>
+              scheduleRedraw(rendition, 60),
+            );
+            ro.observe(doc.body);
+          } catch {}
+        }
       });
+
+      rendition.on("relocated", () => scheduleRedraw(rendition, 60));
+      rendition.on("resized", () => scheduleRedraw(rendition, 60));
     },
-    [applyStyles, applyHighlights, onTocLoaded, renditionRef],
+    [applyStyles, applyHighlights, scheduleRedraw, onTocLoaded, renditionRef],
   );
 
   const handleLocationChanged = useCallback(
@@ -442,8 +500,7 @@ export default function ReaderView({
         }
 
         onProgressUpdate(epubcifi, percentage, chapterLabel);
-      } catch {
-      }
+      } catch {}
     },
     [onLocationChange, onProgressUpdate, renditionRef],
   );
