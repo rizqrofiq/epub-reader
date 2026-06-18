@@ -71,6 +71,58 @@ const LINE_HEIGHT_MAP: Record<LineHeight, string> = {
   relaxed: "2.0",
 };
 
+const MATHJAX_SRC = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
+
+// Injected into each chapter iframe to typeset MathML/TeX and keep wide
+// display math from overflowing epub.js's paginated columns.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function injectMathJaxIntoContents(contents: any) {
+  const doc: Document | undefined = contents?.document;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win: any = contents?.window;
+  if (!doc || !win || !doc.body) return;
+
+  const hasMathML = !!doc.querySelector("math");
+  const hasTex = /\\\(|\\\[|\$\$/.test(doc.body.textContent || "");
+  if (!hasMathML && !hasTex) return;
+
+  if (!doc.getElementById("mathjax-readium-style")) {
+    const style = doc.createElement("style");
+    style.id = "mathjax-readium-style";
+    style.textContent = `
+      mjx-container[display="true"] {
+        overflow-x: auto;
+        overflow-y: hidden;
+        max-width: 100%;
+      }
+      math { max-width: 100%; }
+    `;
+    doc.head.appendChild(style);
+  }
+
+  if (doc.getElementById("mathjax-readium-script")) return;
+
+  win.MathJax = {
+    tex: {
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [
+        ["\\[", "\\]"],
+        ["$$", "$$"],
+      ],
+    },
+    options: {
+      skipHtmlTags: ["script", "noscript", "style", "textarea", "pre"],
+    },
+    startup: { typeset: true },
+  };
+
+  const script = doc.createElement("script");
+  script.id = "mathjax-readium-script";
+  script.src = MATHJAX_SRC;
+  script.async = true;
+  doc.head.appendChild(script);
+}
+
 const THEME_STYLES: Record<ReaderTheme, { body: Record<string, string> }> = {
   dark: {
     body: {
@@ -274,6 +326,15 @@ export default function ReaderView({
       renditionRef.current = rendition;
       applyStyles(rendition);
 
+      rendition.hooks.content.register(injectMathJaxIntoContents);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (rendition.getContents() || []).forEach((c: any) =>
+          injectMathJaxIntoContents(c),
+        );
+      } catch {
+      }
+
       rendition.book.ready
         .then(() => {
           if (cachedLocations) {
@@ -425,7 +486,7 @@ export default function ReaderView({
           spread: layout === "double" ? "auto" : "none",
           minSpreadWidth: 800,
           allowPopups: true,
-          allowScriptedContent: false,
+          allowScriptedContent: true,
         }}
         readerStyles={{
           container: {
