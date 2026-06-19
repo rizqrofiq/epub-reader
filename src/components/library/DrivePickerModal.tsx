@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { addBook } from "@/lib/supabase/queries/books";
 import { storeEpubFromBuffer } from "@/lib/epub-cache";
+import { uploadEpubToCloud, QuotaError } from "@/lib/epub-cloud";
 import { openDrivePicker } from "@/lib/google/drive-picker";
 import { downloadDriveFile } from "@/lib/google/drive-download";
 import ePub from "epubjs";
@@ -60,6 +61,20 @@ export default function DrivePickerModal({
       setStatus("Caching file locally...");
       const fileHash = await storeEpubFromBuffer(arrayBuffer, fileResult.name);
 
+      setStatus("Uploading to cloud...");
+      let storageKey: string | null = null;
+      try {
+        storageKey = await uploadEpubToCloud(fileHash, arrayBuffer);
+      } catch (err) {
+        if (err instanceof QuotaError) {
+          setError(err.message);
+          setLoading(false);
+          setStatus("");
+          return;
+        }
+        console.warn("Cloud upload failed, continuing with local copy:", err);
+      }
+
       setStatus("Extracting metadata...");
       const book = ePub(arrayBuffer);
       await book.ready;
@@ -87,6 +102,7 @@ export default function DrivePickerModal({
         cover_url: coverUrl,
         file_hash: fileHash,
         source: "google_drive",
+        storage_key: storageKey,
         drive_file_id: fileResult.id,
         file_size: fileResult.sizeBytes,
         metadata: {

@@ -3,12 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { deleteBook } from "@/lib/supabase/queries/books";
-import { deleteEpub } from "@/lib/epub-cache";
+import { removeBook } from "@/lib/epub-cloud";
 import type { Book } from "@/lib/supabase/types";
 
 interface BookCardProps {
-  book: Book & { reading_progress?: { percentage: number; chapter_label?: string }[] };
+  book: Book & {
+    reading_progress?: { percentage: number; chapter_label?: string }[];
+  };
   onDelete: () => void;
   compact?: boolean;
   listMode?: boolean;
@@ -39,8 +40,7 @@ export default function BookCard({
     e.stopPropagation();
     if (!confirm("Remove this book from your library?")) return;
     setDeleting(true);
-    await deleteBook(supabase, book.id);
-    await deleteEpub(book.file_hash);
+    await removeBook(supabase, book.id, book.file_hash);
     onDelete();
   };
 
@@ -81,7 +81,9 @@ export default function BookCard({
                 style={{ width: `${percentage}%` }}
               />
             </div>
-            <span className="text-xs text-text-tertiary w-8">{percentage}%</span>
+            <span className="text-xs text-text-tertiary w-8">
+              {percentage}%
+            </span>
           </div>
         )}
 

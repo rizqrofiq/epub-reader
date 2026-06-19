@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { addBook } from "@/lib/supabase/queries/books";
 import { storeEpub } from "@/lib/epub-cache";
+import { uploadEpubToCloud, QuotaError } from "@/lib/epub-cloud";
 import ePub from "epubjs";
 
 interface UploadModalProps {
@@ -43,8 +44,23 @@ export default function UploadModal({
         setStatus("Caching file locally...");
         const fileHash = await storeEpub(file);
 
-        setStatus("Extracting metadata...");
         const arrayBuffer = await file.arrayBuffer();
+
+        setStatus("Uploading to cloud...");
+        let storageKey: string | null = null;
+        try {
+          storageKey = await uploadEpubToCloud(fileHash, arrayBuffer);
+        } catch (err) {
+          if (err instanceof QuotaError) {
+            setError(err.message);
+            setUploading(false);
+            setStatus("");
+            return;
+          }
+          console.warn("Cloud upload failed, continuing with local copy:", err);
+        }
+
+        setStatus("Extracting metadata...");
         const book = ePub(arrayBuffer);
         await book.ready;
 
@@ -72,6 +88,7 @@ export default function UploadModal({
           cover_url: coverUrl,
           file_hash: fileHash,
           source: "upload",
+          storage_key: storageKey,
           file_size: file.size,
           metadata: {
             publisher: metadata.publisher,

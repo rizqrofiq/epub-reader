@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Book, BookInsert } from "@/lib/supabase/types";
 
 const BOOK_LIST_COLUMNS =
-  "id,user_id,title,author,file_hash,source,drive_file_id,file_size,metadata,created_at,updated_at,reading_progress(percentage,chapter_label)";
+  "id,user_id,title,author,file_hash,source,drive_file_id,storage_key,file_size,metadata,created_at,updated_at,reading_progress(percentage,chapter_label)";
 
 export async function getUserBooks(
   supabase: SupabaseClient,

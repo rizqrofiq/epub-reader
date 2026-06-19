@@ -5,10 +5,23 @@ import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getBook } from "@/lib/supabase/queries/books";
 import { getProgress, upsertProgress } from "@/lib/supabase/queries/progress";
-import { getHighlights, addHighlight, deleteHighlight } from "@/lib/supabase/queries/highlights";
-import { getBookmarks, toggleBookmark, deleteBookmark as removeBookmark } from "@/lib/supabase/queries/bookmarks";
+import {
+  getHighlights,
+  addHighlight,
+  deleteHighlight,
+} from "@/lib/supabase/queries/highlights";
+import {
+  getBookmarks,
+  toggleBookmark,
+  deleteBookmark as removeBookmark,
+} from "@/lib/supabase/queries/bookmarks";
 import { startSession, endSession } from "@/lib/supabase/queries/history";
-import { getEpubWithLocations, saveEpubLocations } from "@/lib/epub-cache";
+import {
+  getEpubWithLocations,
+  saveEpubLocations,
+  storeEpubFromBuffer,
+} from "@/lib/epub-cache";
+import { downloadEpubFromCloud } from "@/lib/epub-cloud";
 import { useReaderStore } from "@/stores/reader-store";
 import type { Book, Highlight, Bookmark } from "@/lib/supabase/types";
 import ReaderView from "@/components/reader/ReaderView";
@@ -43,11 +56,21 @@ export default function ReadPage() {
   const progressSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
-    theme, fontSize, fontFamily, lineHeight, layout,
-    isSidebarOpen, toggleSidebar, setSidebarOpen,
-    activeSidebarTab, setActiveSidebarTab,
-    isSettingsOpen, toggleSettings, setSettingsOpen,
-    isToolbarVisible, setToolbarVisible,
+    theme,
+    fontSize,
+    fontFamily,
+    lineHeight,
+    layout,
+    isSidebarOpen,
+    toggleSidebar,
+    setSidebarOpen,
+    activeSidebarTab,
+    setActiveSidebarTab,
+    isSettingsOpen,
+    toggleSettings,
+    setSettingsOpen,
+    isToolbarVisible,
+    setToolbarVisible,
   } = useReaderStore();
 
   useEffect(() => {
@@ -70,12 +93,28 @@ export default function ReadPage() {
         ]);
         if (cancelled) return;
 
-        if (!cached?.data) {
-          setError("EPUB file not found in local cache. Please re-upload the file.");
-          return;
+        if (cached?.data) {
+          setEpubData(cached.data);
+          if (cached.locations) setCachedLocations(cached.locations);
+        } else {
+          let cloudData: ArrayBuffer | null = null;
+          try {
+            cloudData = await downloadEpubFromCloud(bookData.file_hash);
+          } catch (err) {
+            console.error("Cloud download failed:", err);
+          }
+          if (cancelled) return;
+
+          if (!cloudData) {
+            setError(
+              "EPUB file not found locally or in the cloud. Please re-upload the file.",
+            );
+            return;
+          }
+
+          await storeEpubFromBuffer(cloudData, bookData.title || "book.epub");
+          setEpubData(cloudData);
         }
-        setEpubData(cached.data);
-        if (cached.locations) setCachedLocations(cached.locations);
 
         if (progress?.cfi && progress.cfi.startsWith("epubcfi(")) {
           setLocation(progress.cfi);
@@ -115,7 +154,9 @@ export default function ReadPage() {
       cancelled = true;
       if (progressSaveRef.current) clearTimeout(progressSaveRef.current);
       if (sessionIdRef.current) {
-        const duration = Math.floor((Date.now() - sessionStartRef.current) / 1000);
+        const duration = Math.floor(
+          (Date.now() - sessionStartRef.current) / 1000,
+        );
         endSession(supabase, sessionIdRef.current, duration, 0);
       }
     };
@@ -137,11 +178,11 @@ export default function ReadPage() {
       if (progressSaveRef.current) clearTimeout(progressSaveRef.current);
       progressSaveRef.current = setTimeout(() => {
         upsertProgress(supabase, bookId, cfi, percentage, chapterLabel).catch(
-          (err) => console.error("Failed to save progress:", err)
+          (err) => console.error("Failed to save progress:", err),
         );
       }, 1500);
     },
-    [supabase, bookId]
+    [supabase, bookId],
   );
 
   const handleAddHighlight = useCallback(
@@ -156,7 +197,7 @@ export default function ReadPage() {
       });
       if (hl) setHighlights((prev) => [...prev, hl]);
     },
-    [supabase, bookId, currentChapter]
+    [supabase, bookId, currentChapter],
   );
 
   const handleDeleteHighlight = useCallback(
@@ -164,12 +205,18 @@ export default function ReadPage() {
       const success = await deleteHighlight(supabase, id);
       if (success) setHighlights((prev) => prev.filter((h) => h.id !== id));
     },
-    [supabase]
+    [supabase],
   );
 
   const handleToggleBookmark = useCallback(async () => {
     if (!currentCfi) return;
-    const result = await toggleBookmark(supabase, bookId, currentCfi, "", currentChapter);
+    const result = await toggleBookmark(
+      supabase,
+      bookId,
+      currentCfi,
+      "",
+      currentChapter,
+    );
     if (result.added && result.bookmark) {
       setBookmarks((prev) => [result.bookmark!, ...prev]);
     } else {
@@ -182,49 +229,49 @@ export default function ReadPage() {
       const success = await removeBookmark(supabase, id);
       if (success) setBookmarks((prev) => prev.filter((b) => b.id !== id));
     },
-    [supabase]
+    [supabase],
   );
 
-  const handleNavigate = useCallback((cfi: string) => {
-    setLocation(cfi);
-    setSidebarOpen(false);
-  }, [setSidebarOpen]);
-
-  const handleSearch = useCallback(
-    async (query: string) => {
-      if (!renditionRef.current || !query.trim()) {
-        setSearchResults([]);
-        return;
-      }
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const r = renditionRef.current as any;
-        const book = r.book;
-        const results: Array<{ cfi: string; excerpt: string }> = [];
-        const spine = book.spine;
-
-        for (let i = 0; i < spine.length; i++) {
-          const item = spine.get(i);
-          if (!item) continue;
-          await item.load(book.load.bind(book));
-          const found = await item.find(query);
-          if (found.length) {
-            results.push(
-              ...found.map((f: { cfi: string; excerpt: string }) => ({
-                cfi: f.cfi,
-                excerpt: f.excerpt,
-              }))
-            );
-          }
-          item.unload();
-        }
-        setSearchResults(results);
-      } catch (err) {
-        console.error("Search error:", err);
-      }
+  const handleNavigate = useCallback(
+    (cfi: string) => {
+      setLocation(cfi);
+      setSidebarOpen(false);
     },
-    []
+    [setSidebarOpen],
   );
+
+  const handleSearch = useCallback(async (query: string) => {
+    if (!renditionRef.current || !query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = renditionRef.current as any;
+      const book = r.book;
+      const results: Array<{ cfi: string; excerpt: string }> = [];
+      const spine = book.spine;
+
+      for (let i = 0; i < spine.length; i++) {
+        const item = spine.get(i);
+        if (!item) continue;
+        await item.load(book.load.bind(book));
+        const found = await item.find(query);
+        if (found.length) {
+          results.push(
+            ...found.map((f: { cfi: string; excerpt: string }) => ({
+              cfi: f.cfi,
+              excerpt: f.excerpt,
+            })),
+          );
+        }
+        item.unload();
+      }
+      setSearchResults(results);
+    } catch (err) {
+      console.error("Search error:", err);
+    }
+  }, []);
 
   const handleReaderClick = useCallback(() => {
     setToolbarVisible(!isToolbarVisible);
@@ -233,21 +280,26 @@ export default function ReadPage() {
 
   const handleBack = () => {
     if (sessionIdRef.current) {
-      const duration = Math.floor((Date.now() - sessionStartRef.current) / 1000);
+      const duration = Math.floor(
+        (Date.now() - sessionStartRef.current) / 1000,
+      );
       endSession(supabase, sessionIdRef.current, duration, 0);
       sessionIdRef.current = null;
     }
     router.push("/dashboard");
   };
 
-  const handleLocationsGenerated = useCallback((locations: string) => {
-    if (book?.file_hash) {
-      saveEpubLocations(book.file_hash, locations).catch((err) => {
-        console.error("Failed to save locations cache:", err);
-      });
-      setCachedLocations(locations);
-    }
-  }, [book?.file_hash]);
+  const handleLocationsGenerated = useCallback(
+    (locations: string) => {
+      if (book?.file_hash) {
+        saveEpubLocations(book.file_hash, locations).catch((err) => {
+          console.error("Failed to save locations cache:", err);
+        });
+        setCachedLocations(locations);
+      }
+    },
+    [book?.file_hash],
+  );
 
   if (loading) {
     return (
@@ -271,10 +323,7 @@ export default function ReadPage() {
           </span>
           <h2 className="text-xl font-medium text-text-primary mb-2">Error</h2>
           <p className="text-text-secondary mb-6">{error}</p>
-          <button
-            onClick={handleBack}
-            className="btn-primary w-full"
-          >
+          <button onClick={handleBack} className="btn-primary w-full">
             Go Back
           </button>
         </div>
@@ -293,8 +342,8 @@ export default function ReadPage() {
           theme === "dark"
             ? "#0f0f0f"
             : theme === "sepia"
-            ? "#e2d5b7"
-            : "#fafafa",
+              ? "#e2d5b7"
+              : "#fafafa",
       }}
     >
       <ReaderToolbar
@@ -314,7 +363,10 @@ export default function ReadPage() {
         onBack={handleBack}
       />
 
-      <SettingsPanel isOpen={isSettingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
 
       <div onClick={handleReaderClick} className="h-screen">
         <ReaderView

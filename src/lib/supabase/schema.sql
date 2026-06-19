@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.books (
   file_hash TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'upload',
   drive_file_id TEXT,
+  storage_key TEXT,
   file_size BIGINT,
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -20,6 +21,8 @@ CREATE TABLE IF NOT EXISTS public.books (
   UNIQUE(user_id, file_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_books_user_id ON public.books(user_id);
+-- Migration for existing databases:
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS storage_key TEXT;
 
 -- Reading progress
 CREATE TABLE IF NOT EXISTS public.reading_progress (
