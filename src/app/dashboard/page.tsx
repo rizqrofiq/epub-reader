@@ -9,18 +9,25 @@ import type { Book, ReadingStats } from "@/lib/supabase/types";
 import BookCard from "@/components/library/BookCard";
 import UploadModal from "@/components/library/UploadModal";
 import DrivePickerModal from "@/components/library/DrivePickerModal";
+import CategorizeModal from "@/components/library/CategorizeModal";
 
 export default function DashboardPage() {
   const [books, setBooks] = useState<Book[]>([]);
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
+  const [categorizingBook, setCategorizingBook] = useState<Book | null>(null);
 
   const {
     viewMode,
     setViewMode,
     searchQuery,
     setSearchQuery,
+    activeShelf,
+    setActiveShelf,
+    activeTags,
+    toggleTag,
+    clearFilters,
     isUploadModalOpen,
     setUploadModalOpen,
     isDrivePickerOpen,
@@ -77,14 +84,45 @@ export default function DashboardPage() {
     window.location.href = "/auth";
   };
 
+  const allShelves = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of books) if (b.shelf) set.add(b.shelf);
+    return Array.from(set).sort();
+  }, [books]);
+
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of books) for (const t of b.tags || []) set.add(t);
+    return Array.from(set).sort();
+  }, [books]);
+
+  const hasActiveFilters = !!searchQuery || !!activeShelf || activeTags.length > 0;
+
   const filteredBooks = books.filter((book) => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      book.title.toLowerCase().includes(q) ||
-      (book.author && book.author.toLowerCase().includes(q))
-    );
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matches =
+        book.title.toLowerCase().includes(q) ||
+        (book.author && book.author.toLowerCase().includes(q));
+      if (!matches) return false;
+    }
+    if (activeShelf && book.shelf !== activeShelf) return false;
+    // Tags use AND semantics: a book must carry every selected tag.
+    if (activeTags.length > 0) {
+      const tags = book.tags || [];
+      if (!activeTags.every((t) => tags.includes(t))) return false;
+    }
+    return true;
   });
+
+  const handleCategorized = useCallback(
+    (bookId: string, shelf: string | null, tags: string[]) => {
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, shelf, tags } : b))
+      );
+    },
+    []
+  );
 
   const continueReading = books
     .filter(
@@ -272,6 +310,67 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {(allShelves.length > 0 || allTags.length > 0) && (
+          <div className="mb-6 space-y-3 animate-slide-up [animation-delay:300ms]">
+            {allShelves.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-text-tertiary uppercase tracking-wider mr-1">
+                  Shelves
+                </span>
+                {allShelves.map((shelf) => (
+                  <button
+                    key={shelf}
+                    onClick={() =>
+                      setActiveShelf(activeShelf === shelf ? null : shelf)
+                    }
+                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${
+                      activeShelf === shelf
+                        ? "bg-accent text-bg-primary border-accent"
+                        : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
+                    }`}
+                  >
+                    <span className="material-symbols-rounded !text-[14px]">
+                      shelves
+                    </span>
+                    {shelf}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {allTags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-text-tertiary uppercase tracking-wider mr-1">
+                  Tags
+                </span>
+                {allTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className={`px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${
+                      activeTags.includes(tag)
+                        ? "bg-accent/20 text-accent border-accent/40"
+                        : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-rounded !text-[14px]">close</span>
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <span className="material-symbols-rounded text-accent animate-spin !text-[32px]">
@@ -286,14 +385,14 @@ export default function DashboardPage() {
               </span>
             </div>
             <h3 className="text-lg font-medium text-text-primary mb-1">
-              {searchQuery ? "No books found" : "Your library is empty"}
+              {hasActiveFilters ? "No books found" : "Your library is empty"}
             </h3>
             <p className="text-text-secondary text-sm mb-6">
-              {searchQuery
-                ? "Try a different search term"
+              {hasActiveFilters
+                ? "Try adjusting your search or filters"
                 : "Upload an EPUB or import from Google Drive to get started"}
             </p>
-            {!searchQuery && (
+            {!hasActiveFilters && (
               <button
                 onClick={() => setUploadModalOpen(true)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-md bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
@@ -322,6 +421,7 @@ export default function DashboardPage() {
                 <BookCard
                   book={book}
                   onDelete={() => loadData()}
+                  onCategorize={setCategorizingBook}
                   listMode={viewMode === "list"}
                 />
               </div>
@@ -345,6 +445,13 @@ export default function DashboardPage() {
           setDrivePickerOpen(false);
           loadData();
         }}
+      />
+      <CategorizeModal
+        book={categorizingBook}
+        shelfSuggestions={allShelves}
+        tagSuggestions={allTags}
+        onClose={() => setCategorizingBook(null)}
+        onSaved={handleCategorized}
       />
     </div>
   );

@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS public.books (
   source TEXT NOT NULL DEFAULT 'upload',
   drive_file_id TEXT,
   storage_key TEXT,
+  shelf TEXT,
+  tags TEXT[] NOT NULL DEFAULT '{}',
   file_size BIGINT,
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -23,6 +25,10 @@ CREATE TABLE IF NOT EXISTS public.books (
 CREATE INDEX IF NOT EXISTS idx_books_user_id ON public.books(user_id);
 -- Migration for existing databases:
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS storage_key TEXT;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS shelf TEXT;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_books_tags ON public.books USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_books_shelf ON public.books(user_id, shelf);
 
 -- Reading progress
 CREATE TABLE IF NOT EXISTS public.reading_progress (

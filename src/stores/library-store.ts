@@ -7,6 +7,12 @@ interface LibraryState {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
 
+  activeShelf: string | null;
+  setActiveShelf: (shelf: string | null) => void;
+  activeTags: string[];
+  toggleTag: (tag: string) => void;
+  clearFilters: () => void;
+
   isUploadModalOpen: boolean;
   setUploadModalOpen: (open: boolean) => void;
   isDrivePickerOpen: boolean;
@@ -23,6 +29,17 @@ export const useLibraryStore = create<LibraryState>()((set) => ({
 
   searchQuery: "",
   setSearchQuery: (searchQuery) => set({ searchQuery }),
+
+  activeShelf: null,
+  setActiveShelf: (activeShelf) => set({ activeShelf }),
+  activeTags: [],
+  toggleTag: (tag) =>
+    set((state) => ({
+      activeTags: state.activeTags.includes(tag)
+        ? state.activeTags.filter((t) => t !== tag)
+        : [...state.activeTags, tag],
+    })),
+  clearFilters: () => set({ activeShelf: null, activeTags: [], searchQuery: "" }),
 
   isUploadModalOpen: false,
   setUploadModalOpen: (isUploadModalOpen) => set({ isUploadModalOpen }),

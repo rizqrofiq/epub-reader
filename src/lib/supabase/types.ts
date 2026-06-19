@@ -8,6 +8,8 @@ export interface Book {
   source: "upload" | "google_drive";
   drive_file_id: string | null;
   storage_key: string | null;
+  shelf: string | null;
+  tags: string[];
   file_size: number | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -22,6 +24,8 @@ export interface BookInsert {
   source?: "upload" | "google_drive";
   drive_file_id?: string | null;
   storage_key?: string | null;
+  shelf?: string | null;
+  tags?: string[];
   file_size?: number | null;
   metadata?: Record<string, unknown>;
 }
