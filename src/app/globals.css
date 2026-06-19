@@ -8,7 +8,7 @@
   --color-bg-primary: #0f0f0f;
   --color-bg-secondary: #171717;
   --color-bg-elevated: #212121;
-  --color-bg-glass: rgba(23, 23, 23, 0.7);
+  --color-bg-glass: rgba(15, 15, 15, 0.92);
 
   --color-accent: #3ECF8E;
   --color-accent-hover: #2BA872;
@@ -111,7 +111,7 @@ body {
   --color-bg-primary: #fafafa;
   --color-bg-secondary: #ffffff;
   --color-bg-elevated: #f5f5f5;
-  --color-bg-glass: rgba(255, 255, 255, 0.8);
+  --color-bg-glass: rgba(250, 250, 250, 0.92);
   --color-text-primary: #171717;
   --color-text-secondary: #666666;
   --color-text-tertiary: #999999;
@@ -198,4 +198,19 @@ body {
 
 .epub-container {
   overflow: hidden !important;
+}
+
+/* Google Picker centers itself with position:absolute + a computed top, which
+   makes it flash at the top of the page (and can scroll the page up) before it
+   recalculates. Pin it to the viewport center so it's stable from the start. */
+.picker-dialog-bg {
+  z-index: 100000 !important;
+}
+.picker-dialog {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+  z-index: 100001 !important;
 }

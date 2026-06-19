@@ -76,7 +76,7 @@ export default function BookCard({
           {(book.shelf || (book.tags && book.tags.length > 0)) && (
             <div className="flex flex-wrap items-center gap-1 mt-1">
               {book.shelf && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary text-[10px]">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-bg-elevated border border-border text-text-secondary text-[10px]">
                   <span className="material-symbols-rounded !text-[12px]">
                     shelves
                   </span>
@@ -86,7 +86,7 @@ export default function BookCard({
               {book.tags?.map((t) => (
                 <span
                   key={t}
-                  className="px-2 py-0.5 rounded-full bg-accent/10 text-accent text-[10px]"
+                  className="px-2 py-0.5 rounded-md bg-accent/10 text-accent text-[10px]"
                 >
                   {t}
                 </span>
@@ -191,6 +191,32 @@ export default function BookCard({
           <span className="material-symbols-rounded sm">more_vert</span>
         </button>
 
+        {(book.shelf || (book.tags && book.tags.length > 0)) && (
+          <div className="absolute top-2 left-2 right-10 flex flex-wrap gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            {book.shelf && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px]">
+                <span className="material-symbols-rounded !text-[12px]">
+                  shelves
+                </span>
+                {book.shelf}
+              </span>
+            )}
+            {book.tags?.slice(0, 2).map((t) => (
+              <span
+                key={t}
+                className="px-2 py-0.5 rounded-md bg-accent/85 text-bg-primary text-[10px] font-medium"
+              >
+                {t}
+              </span>
+            ))}
+            {book.tags && book.tags.length > 2 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px]">
+                +{book.tags.length - 2}
+              </span>
+            )}
+          </div>
+        )}
+
         {showMenu && (
           <div
             className="absolute top-10 right-2 w-36 bg-bg-elevated border border-border rounded-md shadow-xl z-10 animate-scale-in overflow-hidden"
@@ -200,7 +226,9 @@ export default function BookCard({
               onClick={handleOpen}
               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
             >
-              <span className="material-symbols-rounded sm">menu_book</span>
+              <span className="material-symbols-rounded !text-md">
+                menu_book
+              </span>
               Read
             </button>
             {onCategorize && (
@@ -212,7 +240,7 @@ export default function BookCard({
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
               >
-                <span className="material-symbols-rounded sm">sell</span>
+                <span className="material-symbols-rounded !text-md">sell</span>
                 Categorize
               </button>
             )}
@@ -221,7 +249,7 @@ export default function BookCard({
               disabled={deleting}
               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
             >
-              <span className="material-symbols-rounded sm">delete</span>
+              <span className="material-symbols-rounded !text-md">delete</span>
               {deleting ? "Removing..." : "Remove"}
             </button>
           </div>
@@ -236,31 +264,6 @@ export default function BookCard({
           <p className="text-xs text-text-secondary truncate mt-0.5">
             {book.author || "Unknown Author"}
           </p>
-          {(book.shelf || (book.tags && book.tags.length > 0)) && (
-            <div className="flex flex-wrap items-center gap-1 mt-1.5">
-              {book.shelf && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary text-[10px]">
-                  <span className="material-symbols-rounded !text-[12px]">
-                    shelves
-                  </span>
-                  {book.shelf}
-                </span>
-              )}
-              {book.tags?.slice(0, 2).map((t) => (
-                <span
-                  key={t}
-                  className="px-2 py-0.5 rounded-full bg-accent/10 text-accent text-[10px]"
-                >
-                  {t}
-                </span>
-              ))}
-              {book.tags && book.tags.length > 2 && (
-                <span className="text-[10px] text-text-tertiary">
-                  +{book.tags.length - 2}
-                </span>
-              )}
-            </div>
-          )}
           {percentage > 0 && (
             <span className="text-xs text-accent mt-1 inline-block">
               {percentage}%

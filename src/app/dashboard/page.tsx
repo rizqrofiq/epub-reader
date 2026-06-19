@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getUserBooks, getBookCovers } from "@/lib/supabase/queries/books";
+import { getCachedCovers, setCachedCovers } from "@/lib/epub-cache";
 import { getReadingStats } from "@/lib/supabase/queries/history";
 import { useLibraryStore } from "@/stores/library-store";
 import type { Book, ReadingStats } from "@/lib/supabase/types";
@@ -17,6 +18,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
   const [categorizingBook, setCategorizingBook] = useState<Book | null>(null);
+  // Entrance animation should play once on first load — not replay on every
+  // search/filter/refetch, which is what caused the "wave" blink.
+  const [showEntrance, setShowEntrance] = useState(true);
 
   const {
     viewMode,
@@ -49,9 +53,7 @@ export default function DashboardPage() {
       }
 
       setUserName(
-        user.user_metadata?.full_name ||
-          user.email?.split("@")[0] ||
-          "Reader"
+        user.user_metadata?.full_name || user.email?.split("@")[0] || "Reader",
       );
 
       const [booksData, statsData] = await Promise.all([
@@ -61,11 +63,24 @@ export default function DashboardPage() {
       setBooks(booksData);
       setStats(statsData);
 
+      getCachedCovers()
+        .then((cached) => {
+          setBooks((prev) =>
+            prev.map((b) =>
+              !b.cover_url && cached[b.id]
+                ? { ...b, cover_url: cached[b.id] }
+                : b,
+            ),
+          );
+        })
+        .catch(() => {});
+
       getBookCovers(supabase, user.id)
         .then((covers) => {
           setBooks((prev) =>
-            prev.map((b) => ({ ...b, cover_url: covers[b.id] ?? null }))
+            prev.map((b) => ({ ...b, cover_url: covers[b.id] ?? null })),
           );
+          setCachedCovers(covers).catch(() => {});
         })
         .catch((err) => console.error("Failed to load covers:", err));
     } catch (err) {
@@ -78,6 +93,13 @@ export default function DashboardPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!loading && books.length > 0 && showEntrance) {
+      const t = setTimeout(() => setShowEntrance(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [loading, books.length, showEntrance]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -96,7 +118,8 @@ export default function DashboardPage() {
     return Array.from(set).sort();
   }, [books]);
 
-  const hasActiveFilters = !!searchQuery || !!activeShelf || activeTags.length > 0;
+  const hasActiveFilters =
+    !!searchQuery || !!activeShelf || activeTags.length > 0;
 
   const filteredBooks = books.filter((book) => {
     if (searchQuery) {
@@ -107,7 +130,6 @@ export default function DashboardPage() {
       if (!matches) return false;
     }
     if (activeShelf && book.shelf !== activeShelf) return false;
-    // Tags use AND semantics: a book must carry every selected tag.
     if (activeTags.length > 0) {
       const tags = book.tags || [];
       if (!activeTags.every((t) => tags.includes(t))) return false;
@@ -118,10 +140,10 @@ export default function DashboardPage() {
   const handleCategorized = useCallback(
     (bookId: string, shelf: string | null, tags: string[]) => {
       setBooks((prev) =>
-        prev.map((b) => (b.id === bookId ? { ...b, shelf, tags } : b))
+        prev.map((b) => (b.id === bookId ? { ...b, shelf, tags } : b)),
       );
     },
-    []
+    [],
   );
 
   const continueReading = books
@@ -131,7 +153,7 @@ export default function DashboardPage() {
         Array.isArray(b.reading_progress) &&
         b.reading_progress.length > 0 &&
         b.reading_progress[0].percentage > 0 &&
-        b.reading_progress[0].percentage < 0.95
+        b.reading_progress[0].percentage < 0.95,
     )
     .slice(0, 4);
 
@@ -173,8 +195,13 @@ export default function DashboardPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8 animate-slide-up">
           <h1 className="text-3xl font-bold text-text-primary mb-2">
-            Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},{" "}
-            {userName}
+            Good{" "}
+            {new Date().getHours() < 12
+              ? "morning"
+              : new Date().getHours() < 18
+                ? "afternoon"
+                : "evening"}
+            , {userName}
           </h1>
           <p className="text-text-secondary">
             Pick up where you left off, or discover something new.
@@ -286,9 +313,7 @@ export default function DashboardPage() {
                     : "text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated"
                 }`}
               >
-                <span className="material-symbols-rounded sm">
-                  view_list
-                </span>
+                <span className="material-symbols-rounded sm">view_list</span>
               </button>
             </div>
 
@@ -364,14 +389,16 @@ export default function DashboardPage() {
                 onClick={clearFilters}
                 className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
               >
-                <span className="material-symbols-rounded !text-[14px]">close</span>
+                <span className="material-symbols-rounded !text-[14px]">
+                  close
+                </span>
                 Clear filters
               </button>
             )}
           </div>
         )}
 
-        {loading ? (
+        {loading && books.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <span className="material-symbols-rounded text-accent animate-spin !text-[32px]">
               progress_activity
@@ -397,9 +424,7 @@ export default function DashboardPage() {
                 onClick={() => setUploadModalOpen(true)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-md bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
               >
-                <span className="material-symbols-rounded sm">
-                  upload_file
-                </span>
+                <span className="material-symbols-rounded sm">upload_file</span>
                 Upload your first book
               </button>
             )}
@@ -412,11 +437,10 @@ export default function DashboardPage() {
                 : "flex flex-col gap-3"
             }
           >
-            {filteredBooks.map((book, i) => (
+            {filteredBooks.map((book) => (
               <div
                 key={book.id}
-                className="animate-slide-up"
-                style={{ animationDelay: `${i * 50}ms` }}
+                className={showEntrance ? "animate-fade-in" : undefined}
               >
                 <BookCard
                   book={book}

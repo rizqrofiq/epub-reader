@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deleteBook } from "@/lib/supabase/queries/books";
-import { deleteEpub } from "@/lib/epub-cache";
+import { deleteEpub, deleteCachedCover } from "@/lib/epub-cache";
 
 export class QuotaError extends Error {}
 
@@ -12,6 +12,7 @@ export async function removeBook(
   await deleteEpubFromCloud(bookId);
   const ok = await deleteBook(supabase, bookId);
   await deleteEpub(fileHash);
+  await deleteCachedCover(bookId);
   return ok;
 }
 

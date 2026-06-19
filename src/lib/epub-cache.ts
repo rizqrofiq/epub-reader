@@ -8,13 +8,24 @@ interface CachedEpub {
   locations?: string;
 }
 
+interface CachedCover {
+  bookId: string;
+  coverUrl: string;
+}
+
 const db = new Dexie("ReadiumEpubCache") as Dexie & {
   epubFiles: EntityTable<CachedEpub, "fileHash">;
+  covers: EntityTable<CachedCover, "bookId">;
 };
 
 db.version(2).stores({
   epubFiles: "fileHash, fileName, addedAt",
 }).upgrade((trans) => {
+});
+
+db.version(3).stores({
+  epubFiles: "fileHash, fileName, addedAt",
+  covers: "bookId",
 });
 
 async function hashFile(file: File | ArrayBuffer): Promise<string> {
@@ -99,6 +110,30 @@ export async function getCacheSize(): Promise<number> {
 
 export async function clearCache(): Promise<void> {
   await db.epubFiles.clear();
+}
+
+export async function getCachedCovers(): Promise<Record<string, string>> {
+  const all = await db.covers.toArray();
+  const map: Record<string, string> = {};
+  for (const c of all) map[c.bookId] = c.coverUrl;
+  return map;
+}
+
+export async function setCachedCovers(
+  covers: Record<string, string | null>
+): Promise<void> {
+  const toPut: CachedCover[] = [];
+  const toDelete: string[] = [];
+  for (const [bookId, coverUrl] of Object.entries(covers)) {
+    if (coverUrl) toPut.push({ bookId, coverUrl });
+    else toDelete.push(bookId);
+  }
+  if (toPut.length) await db.covers.bulkPut(toPut);
+  if (toDelete.length) await db.covers.bulkDelete(toDelete);
+}
+
+export async function deleteCachedCover(bookId: string): Promise<void> {
+  await db.covers.delete(bookId);
 }
 
 export { hashFile };
