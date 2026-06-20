@@ -3,7 +3,12 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getUserBooks, getBookCovers } from "@/lib/supabase/queries/books";
-import { getCachedCovers, setCachedCovers } from "@/lib/epub-cache";
+import {
+  getCachedCovers,
+  setCachedCovers,
+  cacheBooks,
+  getAllCachedBooks,
+} from "@/lib/epub-cache";
 import { getReadingStats } from "@/lib/supabase/queries/history";
 import { useLibraryStore } from "@/stores/library-store";
 import type { Book, ReadingStats } from "@/lib/supabase/types";
@@ -11,12 +16,16 @@ import BookCard from "@/components/library/BookCard";
 import UploadModal from "@/components/library/UploadModal";
 import DrivePickerModal from "@/components/library/DrivePickerModal";
 import CategorizeModal from "@/components/library/CategorizeModal";
+import NoSSR, { FullScreenSpinner } from "@/components/NoSSR";
+import InstallButton from "@/components/InstallButton";
 
-export default function DashboardPage() {
+function DashboardPageInner() {
   const [books, setBooks] = useState<Book[]>([]);
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
+  // Computed after mount to avoid an SSR/client time-of-day hydration mismatch.
+  const [greeting, setGreeting] = useState("Welcome");
   const [categorizingBook, setCategorizingBook] = useState<Book | null>(null);
   // Entrance animation should play once on first load — not replay on every
   // search/filter/refetch, which is what caused the "wave" blink.
@@ -40,14 +49,35 @@ export default function DashboardPage() {
 
   const supabase = useMemo(() => createClient(), []);
 
+  const loadFromCache = useCallback(async () => {
+    const [cachedBooks, cachedCovers] = await Promise.all([
+      getAllCachedBooks(),
+      getCachedCovers(),
+    ]);
+    setBooks(
+      cachedBooks.map((b) =>
+        cachedCovers[b.id] ? { ...b, cover_url: cachedCovers[b.id] } : b,
+      ),
+    );
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      let user = null;
+      try {
+        const res = await supabase.auth.getUser();
+        user = res.data.user;
+      } catch {
+        // network/auth unreachable — handled as offline below
+      }
 
       if (!user) {
+        // Offline: show the cached library instead of bouncing to /auth.
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          await loadFromCache();
+          return;
+        }
         window.location.href = "/auth";
         return;
       }
@@ -62,6 +92,7 @@ export default function DashboardPage() {
       ]);
       setBooks(booksData);
       setStats(statsData);
+      cacheBooks(booksData).catch(() => {});
 
       getCachedCovers()
         .then((cached) => {
@@ -88,11 +119,18 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, loadFromCache]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const h = new Date().getHours();
+    setGreeting(
+      h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening",
+    );
+  }, []);
 
   useEffect(() => {
     if (!loading && books.length > 0 && showEntrance) {
@@ -178,6 +216,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <InstallButton />
             <span className="text-sm text-text-secondary hidden sm:block">
               {userName}
             </span>
@@ -194,14 +233,8 @@ export default function DashboardPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8 animate-slide-up">
-          <h1 className="text-3xl font-bold text-text-primary mb-2">
-            Good{" "}
-            {new Date().getHours() < 12
-              ? "morning"
-              : new Date().getHours() < 18
-                ? "afternoon"
-                : "evening"}
-            , {userName}
+          <h1 className="text-2xl sm:text-3xl font-bold text-text-primary mb-2">
+            {greeting}, {userName}
           </h1>
           <p className="text-text-secondary">
             Pick up where you left off, or discover something new.
@@ -273,15 +306,15 @@ export default function DashboardPage() {
           </section>
         )}
 
-        <div className="flex items-center justify-between mb-6 animate-slide-up [animation-delay:300ms]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6 animate-slide-up [animation-delay:300ms]">
           <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
             <span className="material-symbols-rounded text-accent">
               library_books
             </span>
             Your Library
           </h2>
-          <div className="flex items-center gap-3">
-            <div className="relative h-10">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="relative h-10 flex-1 sm:flex-none">
               <span className="material-symbols-rounded sm absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary">
                 search
               </span>
@@ -290,11 +323,11 @@ export default function DashboardPage() {
                 placeholder="Search books..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-full pl-9 pr-4 rounded-md bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-sm text-text-primary placeholder:text-text-tertiary w-48 transition-all duration-200"
+                className="h-full pl-9 pr-4 rounded-md bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-sm text-text-primary placeholder:text-text-tertiary w-full sm:w-48 transition-all duration-200"
               />
             </div>
 
-            <div className="flex h-10 rounded-md border border-border overflow-hidden">
+            <div className="flex h-10 rounded-md border border-border overflow-hidden flex-shrink-0">
               <button
                 onClick={() => setViewMode("grid")}
                 className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer ${
@@ -319,7 +352,7 @@ export default function DashboardPage() {
 
             <button
               onClick={() => setDrivePickerOpen(true)}
-              className="flex items-center gap-1.5 px-4 h-10 rounded-md border border-border text-sm text-text-secondary hover:text-text-primary hover:border-border-hover transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-md border border-border text-sm text-text-secondary hover:text-text-primary hover:border-border-hover transition-all duration-200 cursor-pointer flex-shrink-0"
             >
               <span className="material-symbols-rounded sm">add_to_drive</span>
               <span className="hidden sm:inline">Drive</span>
@@ -327,10 +360,10 @@ export default function DashboardPage() {
 
             <button
               onClick={() => setUploadModalOpen(true)}
-              className="flex items-center gap-1.5 px-4 h-10 rounded-md bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-md bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer flex-shrink-0"
             >
               <span className="material-symbols-rounded sm">upload_file</span>
-              Upload
+              <span className="hidden sm:inline">Upload</span>
             </button>
           </div>
         </div>
@@ -478,5 +511,13 @@ export default function DashboardPage() {
         onSaved={handleCategorized}
       />
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <NoSSR fallback={<FullScreenSpinner />}>
+      <DashboardPageInner />
+    </NoSSR>
   );
 }

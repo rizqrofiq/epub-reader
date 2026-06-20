@@ -4,22 +4,17 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getBook } from "@/lib/supabase/queries/books";
-import { getProgress, upsertProgress } from "@/lib/supabase/queries/progress";
-import {
-  getHighlights,
-  addHighlight,
-  deleteHighlight,
-} from "@/lib/supabase/queries/highlights";
-import {
-  getBookmarks,
-  toggleBookmark,
-  deleteBookmark as removeBookmark,
-} from "@/lib/supabase/queries/bookmarks";
+import { getProgress } from "@/lib/supabase/queries/progress";
+import { getHighlights } from "@/lib/supabase/queries/highlights";
+import { getBookmarks } from "@/lib/supabase/queries/bookmarks";
 import { startSession, endSession } from "@/lib/supabase/queries/history";
+import { runOrQueue } from "@/lib/offline-queue";
 import {
   getEpubWithLocations,
   saveEpubLocations,
   storeEpubFromBuffer,
+  cacheBook,
+  getCachedBook,
 } from "@/lib/epub-cache";
 import { downloadEpubFromCloud } from "@/lib/epub-cloud";
 import { useReaderStore } from "@/stores/reader-store";
@@ -28,8 +23,9 @@ import ReaderView from "@/components/reader/ReaderView";
 import ReaderToolbar from "@/components/reader/ReaderToolbar";
 import ReaderSidebar from "@/components/reader/ReaderSidebar";
 import SettingsPanel from "@/components/reader/SettingsPanel";
+import NoSSR, { FullScreenSpinner } from "@/components/NoSSR";
 
-export default function ReadPage() {
+function ReadPageInner() {
   const params = useParams();
   const router = useRouter();
   const bookId = params.bookId as string;
@@ -79,7 +75,14 @@ export default function ReadPage() {
     async function loadBook() {
       setLoading(true);
       try {
-        const bookData = await getBook(supabase, bookId);
+        let bookData = await getBook(supabase, bookId);
+        if (bookData) {
+          // Keep a local copy so the book is openable offline later.
+          cacheBook(bookData).catch(() => {});
+        } else {
+          // Supabase unreachable (offline) — fall back to the cached row.
+          bookData = (await getCachedBook(bookId)) ?? null;
+        }
         if (cancelled) return;
         if (!bookData) {
           setError("Book not found");
@@ -89,7 +92,7 @@ export default function ReadPage() {
 
         const [cached, progress] = await Promise.all([
           getEpubWithLocations(bookData.file_hash),
-          getProgress(supabase, bookId),
+          getProgress(supabase, bookId).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -177,57 +180,93 @@ export default function ReadPage() {
 
       if (progressSaveRef.current) clearTimeout(progressSaveRef.current);
       progressSaveRef.current = setTimeout(() => {
-        upsertProgress(supabase, bookId, cfi, percentage, chapterLabel).catch(
-          (err) => console.error("Failed to save progress:", err),
-        );
+        runOrQueue(supabase, "progress.upsert", {
+          bookId,
+          cfi,
+          percentage,
+          chapterLabel,
+        }).catch(() => {});
       }, 1500);
     },
     [supabase, bookId],
   );
 
   const handleAddHighlight = useCallback(
-    async (cfiRange: string, text: string, color: string, note?: string) => {
-      const hl = await addHighlight(supabase, {
+    (cfiRange: string, text: string, color: string, note?: string) => {
+      const id = crypto.randomUUID();
+      // Optimistic — works the same online or offline.
+      setHighlights((prev) => [
+        ...prev,
+        {
+          id,
+          user_id: "",
+          book_id: bookId,
+          cfi_range: cfiRange,
+          text_content: text,
+          color,
+          note: note ?? null,
+          chapter_label: currentChapter,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      runOrQueue(supabase, "highlight.add", {
+        id,
         book_id: bookId,
         cfi_range: cfiRange,
         text_content: text,
         color,
-        note,
+        note: note ?? null,
         chapter_label: currentChapter,
-      });
-      if (hl) setHighlights((prev) => [...prev, hl]);
+      }).catch(() => {});
     },
     [supabase, bookId, currentChapter],
   );
 
   const handleDeleteHighlight = useCallback(
-    async (id: string) => {
-      const success = await deleteHighlight(supabase, id);
-      if (success) setHighlights((prev) => prev.filter((h) => h.id !== id));
+    (id: string) => {
+      setHighlights((prev) => prev.filter((h) => h.id !== id));
+      runOrQueue(supabase, "highlight.delete", { id }).catch(() => {});
     },
     [supabase],
   );
 
-  const handleToggleBookmark = useCallback(async () => {
+  const handleToggleBookmark = useCallback(() => {
     if (!currentCfi) return;
-    const result = await toggleBookmark(
-      supabase,
-      bookId,
-      currentCfi,
-      "",
-      currentChapter,
-    );
-    if (result.added && result.bookmark) {
-      setBookmarks((prev) => [result.bookmark!, ...prev]);
-    } else {
-      setBookmarks((prev) => prev.filter((b) => b.cfi !== currentCfi));
+    const existing = bookmarks.find((b) => b.cfi === currentCfi);
+    if (existing) {
+      setBookmarks((prev) => prev.filter((b) => b.id !== existing.id));
+      runOrQueue(supabase, "bookmark.delete", { id: existing.id }).catch(
+        () => {},
+      );
+      return;
     }
-  }, [supabase, bookId, currentCfi, currentChapter]);
+    const id = crypto.randomUUID();
+    setBookmarks((prev) => [
+      {
+        id,
+        user_id: "",
+        book_id: bookId,
+        cfi: currentCfi,
+        text_excerpt: null,
+        label: null,
+        chapter_label: currentChapter,
+        created_at: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+    runOrQueue(supabase, "bookmark.add", {
+      id,
+      book_id: bookId,
+      cfi: currentCfi,
+      text_excerpt: null,
+      chapter_label: currentChapter,
+    }).catch(() => {});
+  }, [supabase, bookId, currentCfi, currentChapter, bookmarks]);
 
   const handleDeleteBookmark = useCallback(
-    async (id: string) => {
-      const success = await removeBookmark(supabase, id);
-      if (success) setBookmarks((prev) => prev.filter((b) => b.id !== id));
+    (id: string) => {
+      setBookmarks((prev) => prev.filter((b) => b.id !== id));
+      runOrQueue(supabase, "bookmark.delete", { id }).catch(() => {});
     },
     [supabase],
   );
@@ -403,5 +442,13 @@ export default function ReadPage() {
         onSearch={handleSearch}
       />
     </div>
+  );
+}
+
+export default function ReadPage() {
+  return (
+    <NoSSR fallback={<FullScreenSpinner />}>
+      <ReadPageInner />
+    </NoSSR>
   );
 }

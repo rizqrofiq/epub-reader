@@ -75,6 +75,52 @@ const LINE_HEIGHT_MAP: Record<LineHeight, string> = {
 const MATHJAX_SRC =
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
 
+// Attaches touch listeners inside a chapter iframe so a deliberate horizontal
+// swipe turns the page — without the blocking overlay react-reader's `swipeable`
+// uses, so text selection (highlights) still works.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function attachSwipeNavigation(contents: any, rendition: any) {
+  const doc: Document | undefined = contents?.document;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win: any = contents?.window;
+  if (!doc || !win) return;
+
+  let startX = 0;
+  let startY = 0;
+  let startT = 0;
+
+  const onStart = (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    startT = e.timeStamp;
+  };
+
+  const onEnd = (e: TouchEvent) => {
+    const t = e.changedTouches[0];
+    if (!t) return;
+
+    // Don't hijack a text selection — that's how highlights are made.
+    const sel = win.getSelection?.();
+    if (sel && sel.toString().length > 0) return;
+
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    const dt = e.timeStamp - startT;
+
+    // Quick, mostly-horizontal flick past a threshold.
+    if (dt < 600 && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+      const rtl = rendition?.book?.package?.metadata?.direction === "rtl";
+      const goNext = rtl ? dx > 0 : dx < 0;
+      if (goNext) rendition.next();
+      else rendition.prev();
+    }
+  };
+
+  doc.addEventListener("touchstart", onStart, { passive: true });
+  doc.addEventListener("touchend", onEnd, { passive: true });
+}
+
 // Injected into each chapter iframe to typeset MathML/TeX and keep wide
 // display math from overflowing epub.js's paginated columns.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -175,9 +221,18 @@ export default function ReaderView({
     color: string;
   } | null>(null);
   const tocLoadedRef = useRef(false);
+  const [isMobile, setIsMobile] = useState(false);
   const highlightsRef = useRef<Highlight[]>(highlights);
   highlightsRef.current = highlights;
   const appliedHlRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   useEffect(() => {
     const originalConsoleError = console.error;
@@ -265,6 +320,18 @@ export default function ReaderView({
         img: {
           "max-width": "100% !important",
           height: "auto !important",
+        },
+        // Wide code/terminal blocks must wrap, or they overflow epub.js's
+        // paginated columns and bleed onto the neighbouring page.
+        pre: {
+          "white-space": "pre-wrap !important",
+          "overflow-wrap": "break-word !important",
+          "word-break": "break-word !important",
+          "max-width": "100% !important",
+          overflow: "hidden !important",
+        },
+        "pre, code, kbd, samp": {
+          "overflow-wrap": "break-word !important",
         },
       });
     },
@@ -364,11 +431,16 @@ export default function ReaderView({
       applyStyles(rendition);
 
       rendition.hooks.content.register(injectMathJaxIntoContents);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rendition.hooks.content.register((c: any) =>
+        attachSwipeNavigation(c, rendition),
+      );
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (rendition.getContents() || []).forEach((c: any) =>
-          injectMathJaxIntoContents(c),
-        );
+        (rendition.getContents() || []).forEach((c: any) => {
+          injectMathJaxIntoContents(c);
+          attachSwipeNavigation(c, rendition);
+        });
       } catch {}
 
       rendition.book.ready
@@ -536,6 +608,10 @@ export default function ReaderView({
   const arrowColor =
     theme === "dark" ? "#666" : theme === "sepia" ? "#8b7355" : "#999";
 
+  // Tighter margins and smaller arrows on phones so text isn't cramped.
+  const sideInset = isMobile ? 24 : 50;
+  const arrowSize = isMobile ? 28 : 40;
+
   return (
     <div className="h-full relative">
       <ReactReader
@@ -572,8 +648,8 @@ export default function ReaderView({
           titleArea: {
             position: "absolute",
             top: 20,
-            left: 50,
-            right: 50,
+            left: sideInset,
+            right: sideInset,
             textAlign: "center",
             color: arrowColor,
             display: "none",
@@ -581,9 +657,9 @@ export default function ReaderView({
           reader: {
             position: "absolute",
             top: 64,
-            left: 50,
+            left: sideInset,
             bottom: 20,
-            right: 50,
+            right: sideInset,
           },
           swipeWrapper: {
             position: "absolute",
@@ -594,11 +670,11 @@ export default function ReaderView({
             zIndex: 200,
           },
           prev: {
-            left: 1,
+            left: isMobile ? -6 : 1,
             zIndex: 100,
           },
           next: {
-            right: 1,
+            right: isMobile ? -6 : 1,
             zIndex: 100,
           },
           arrow: {
@@ -607,9 +683,9 @@ export default function ReaderView({
             background: "none",
             position: "absolute",
             top: "50%",
-            marginTop: "-32px",
-            fontSize: "40px",
-            padding: "10px",
+            marginTop: isMobile ? "-22px" : "-32px",
+            fontSize: `${arrowSize}px`,
+            padding: isMobile ? "6px" : "10px",
             color: arrowColor,
             fontFamily: "arial, sans-serif",
             cursor: "pointer",

@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from "dexie";
+import type { Book } from "@/lib/supabase/types";
 
 interface CachedEpub {
   fileHash: string;
@@ -13,9 +14,18 @@ interface CachedCover {
   coverUrl: string;
 }
 
+export interface OutboxItem {
+  id?: number;
+  op: string;
+  payload: unknown;
+  createdAt: number;
+}
+
 const db = new Dexie("ReadiumEpubCache") as Dexie & {
   epubFiles: EntityTable<CachedEpub, "fileHash">;
   covers: EntityTable<CachedCover, "bookId">;
+  books: EntityTable<Book, "id">;
+  outbox: EntityTable<OutboxItem, "id">;
 };
 
 db.version(2).stores({
@@ -26,6 +36,22 @@ db.version(2).stores({
 db.version(3).stores({
   epubFiles: "fileHash, fileName, addedAt",
   covers: "bookId",
+});
+
+// Book metadata cache — lets the reader open a cached EPUB while offline,
+// when Supabase is unreachable.
+db.version(4).stores({
+  epubFiles: "fileHash, fileName, addedAt",
+  covers: "bookId",
+  books: "id, updated_at",
+});
+
+// Outbox — writes made while offline, replayed when back online.
+db.version(5).stores({
+  epubFiles: "fileHash, fileName, addedAt",
+  covers: "bookId",
+  books: "id, updated_at",
+  outbox: "++id, op",
 });
 
 async function hashFile(file: File | ArrayBuffer): Promise<string> {
@@ -134,6 +160,45 @@ export async function setCachedCovers(
 
 export async function deleteCachedCover(bookId: string): Promise<void> {
   await db.covers.delete(bookId);
+}
+
+export async function cacheBook(book: Book): Promise<void> {
+  await db.books.put(book);
+}
+
+export async function cacheBooks(books: Book[]): Promise<void> {
+  if (books.length) await db.books.bulkPut(books);
+}
+
+export async function getCachedBook(id: string): Promise<Book | undefined> {
+  return db.books.get(id);
+}
+
+export async function getAllCachedBooks(): Promise<Book[]> {
+  const all = await db.books.toArray();
+  return all.sort((a, b) =>
+    (b.updated_at || "").localeCompare(a.updated_at || ""),
+  );
+}
+
+export async function deleteCachedBook(id: string): Promise<void> {
+  await db.books.delete(id);
+}
+
+export async function addOutbox(op: string, payload: unknown): Promise<void> {
+  await db.outbox.add({ op, payload, createdAt: Date.now() });
+}
+
+export async function listOutbox(): Promise<OutboxItem[]> {
+  return db.outbox.orderBy("id").toArray();
+}
+
+export async function removeOutbox(id: number): Promise<void> {
+  await db.outbox.delete(id);
+}
+
+export async function countOutbox(): Promise<number> {
+  return db.outbox.count();
 }
 
 export { hashFile };

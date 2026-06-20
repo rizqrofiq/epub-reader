@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { removeBook } from "@/lib/epub-cloud";
 import type { Book } from "@/lib/supabase/types";
@@ -33,6 +33,16 @@ export default function BookCard({
       ? book.reading_progress[0]
       : null;
   const percentage = progress ? Math.round(progress.percentage * 100) : 0;
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const close = () => setShowMenu(false);
+    const id = setTimeout(() => document.addEventListener("click", close), 0);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("click", close);
+    };
+  }, [showMenu]);
 
   const handleOpen = () => {
     router.push(`/read/${book.id}`);
@@ -115,7 +125,7 @@ export default function BookCard({
               e.stopPropagation();
               onCategorize(book);
             }}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-all duration-200 opacity-0 group-hover:opacity-100 cursor-pointer"
+            className="p-1.5 rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
           >
             <span className="material-symbols-rounded sm">sell</span>
           </button>
@@ -123,7 +133,7 @@ export default function BookCard({
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100 cursor-pointer"
+          className="p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
         >
           <span className="material-symbols-rounded sm">delete</span>
         </button>
@@ -135,7 +145,6 @@ export default function BookCard({
     <div
       className="group relative cursor-pointer"
       onClick={handleOpen}
-      onMouseLeave={() => setShowMenu(false)}
     >
       <div
         className={`relative overflow-hidden rounded-md bg-bg-secondary border border-border group-hover:border-accent/30 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-accent/5 group-hover:-translate-y-1 ${
@@ -186,13 +195,13 @@ export default function BookCard({
             e.stopPropagation();
             setShowMenu(!showMenu);
           }}
-          className="absolute top-2 right-2 p-1 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-black/60 cursor-pointer"
+          className="absolute top-2 right-2 p-1 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-all duration-200 hover:bg-black/60 cursor-pointer"
         >
           <span className="material-symbols-rounded sm">more_vert</span>
         </button>
 
         {(book.shelf || (book.tags && book.tags.length > 0)) && (
-          <div className="absolute top-2 left-2 right-10 flex flex-wrap gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          <div className="absolute top-2 left-2 right-10 flex flex-wrap gap-1 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity duration-300">
             {book.shelf && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px]">
                 <span className="material-symbols-rounded !text-[12px]">
