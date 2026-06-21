@@ -24,9 +24,7 @@ export default function ReaderToolbar({
   return (
     <div
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isVisible
-          ? "translate-y-0 opacity-100"
-          : "-translate-y-full opacity-0"
+        isVisible ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0"
       }`}
     >
       <div className="bg-black/70 backdrop-blur-xl border-b border-white/10">
@@ -36,20 +34,16 @@ export default function ReaderToolbar({
               e.stopPropagation();
               onBack();
             }}
-            className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm text-white/80 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
           >
             <span className="material-symbols-rounded">arrow_back</span>
             <span className="text-sm hidden sm:inline">Library</span>
           </button>
 
           <div className="flex-1 text-center px-4 min-w-0">
-            <h1 className="text-sm font-medium text-white truncate">
-              {title}
-            </h1>
+            <h1 className="text-sm font-medium text-white truncate">{title}</h1>
             {chapter && (
-              <p className="text-xs text-white/50 truncate mt-0.5">
-                {chapter}
-              </p>
+              <p className="text-xs text-white/50 truncate mt-0.5">{chapter}</p>
             )}
           </div>
 
@@ -59,7 +53,7 @@ export default function ReaderToolbar({
                 e.stopPropagation();
                 onToggleBookmark();
               }}
-              className={`p-2 rounded-md transition-all duration-200 cursor-pointer ${
+              className={`p-2 rounded-sm transition-all duration-200 cursor-pointer ${
                 isBookmarked
                   ? "text-accent bg-accent/15"
                   : "text-white/70 hover:text-white hover:bg-white/10"
@@ -79,7 +73,7 @@ export default function ReaderToolbar({
                 e.stopPropagation();
                 onToggleSidebar();
               }}
-              className="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+              className="p-2 rounded-sm text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
               title="Table of Contents"
             >
               <span className="material-symbols-rounded">
@@ -91,7 +85,7 @@ export default function ReaderToolbar({
                 e.stopPropagation();
                 onToggleSettings();
               }}
-              className="p-2 rounded-md text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+              className="p-2 rounded-sm text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
               title="Settings"
             >
               <span className="material-symbols-rounded">settings</span>

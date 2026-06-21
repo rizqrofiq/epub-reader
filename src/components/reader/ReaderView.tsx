@@ -61,6 +61,7 @@ interface ReaderViewProps {
     note?: string,
   ) => void;
   onTocLoaded: (toc: Array<{ label: string; href: string }>) => void;
+  onAskAI?: (text: string) => void;
   renditionRef: MutableRefObject<unknown>;
   cachedLocations?: string;
   onLocationsGenerated?: (locations: string) => void;
@@ -205,6 +206,7 @@ export default function ReaderView({
   highlights,
   onAddHighlight,
   onTocLoaded,
+  onAskAI,
   renditionRef,
   cachedLocations,
   onLocationsGenerated,
@@ -789,6 +791,14 @@ export default function ReaderView({
           });
           setSelection(null);
         }}
+        onAskAI={
+          onAskAI
+            ? () => {
+                if (selection) onAskAI(selection.text);
+                setSelection(null);
+              }
+            : undefined
+        }
         onClose={() => setSelection(null)}
       />
 

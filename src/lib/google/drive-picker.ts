@@ -47,7 +47,7 @@ export async function openDrivePicker(
     const view = new window.google.picker.DocsView(
       window.google.picker.ViewId.DOCS
     );
-    view.setQuery("*.epub");
+    view.setQuery("*.epub | *.pdf");
     view.setMode(window.google.picker.DocsViewMode.LIST);
 
     const picker = new window.google.picker.PickerBuilder()
@@ -55,13 +55,14 @@ export async function openDrivePicker(
       .setOAuthToken(accessToken)
       .setDeveloperKey(process.env.NEXT_PUBLIC_GOOGLE_API_KEY!)
       .setAppId(process.env.NEXT_PUBLIC_GOOGLE_APP_ID!)
-      .setTitle("Select an EPUB file from Google Drive")
+      .setTitle("Select an EPUB or PDF file from Google Drive")
       .setCallback((data: { action: string; docs?: Array<{ id: string; name: string; mimeType: string; sizeBytes: number }> }) => {
         if (data.action === window.google.picker.Action.PICKED && data.docs) {
           const file = data.docs[0];
 
-          if (!file.name.toLowerCase().endsWith(".epub")) {
-            alert("Please select an EPUB file (.epub extension).");
+          const lower = file.name.toLowerCase();
+          if (!lower.endsWith(".epub") && !lower.endsWith(".pdf")) {
+            alert("Please select an EPUB or PDF file.");
             resolve(null);
             return;
           }

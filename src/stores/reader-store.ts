@@ -19,6 +19,9 @@ interface ReaderState {
   layout: PageLayout;
   setLayout: (layout: PageLayout) => void;
 
+  pdfZoom: number;
+  setPdfZoom: (zoom: number) => void;
+
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
@@ -49,6 +52,10 @@ export const useReaderStore = create<ReaderState>()(
       layout: "single",
       setLayout: (layout) => set({ layout }),
 
+      pdfZoom: 1.0,
+      setPdfZoom: (pdfZoom) =>
+        set({ pdfZoom: Math.max(0.5, Math.min(3, pdfZoom)) }),
+
       isSidebarOpen: false,
       toggleSidebar: () =>
         set((state) => ({ isSidebarOpen: !state.isSidebarOpen, isSettingsOpen: false })),
@@ -72,6 +79,7 @@ export const useReaderStore = create<ReaderState>()(
         fontFamily: state.fontFamily,
         lineHeight: state.lineHeight,
         layout: state.layout,
+        pdfZoom: state.pdfZoom,
       }),
     }
   )

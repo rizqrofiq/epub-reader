@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Book, BookInsert } from "@/lib/supabase/types";
 
 const BOOK_LIST_COLUMNS =
-  "id,user_id,title,author,file_hash,source,drive_file_id,storage_key,shelf,tags,file_size,metadata,created_at,updated_at,reading_progress(percentage,chapter_label)";
+  "id,user_id,title,author,file_hash,source,format,drive_file_id,storage_key,shelf,tags,file_size,metadata,created_at,updated_at,reading_progress(percentage,chapter_label)";
 
 export async function getUserBooks(
   supabase: SupabaseClient,
@@ -111,6 +111,18 @@ export async function updateBookCategorization(
     return false;
   }
   return true;
+}
+
+export async function updateBookStorageKey(
+  supabase: SupabaseClient,
+  bookId: string,
+  storageKey: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("books")
+    .update({ storage_key: storageKey })
+    .eq("id", bookId);
+  if (error) console.error("Error updating storage_key:", error);
 }
 
 export async function deleteBook(

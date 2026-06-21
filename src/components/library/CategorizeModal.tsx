@@ -74,7 +74,7 @@ export default function CategorizeModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-md bg-bg-secondary border border-border rounded-md shadow-2xl animate-scale-in">
+      <div className="relative w-full max-w-md bg-bg-secondary border border-border rounded-sm shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between p-5 pb-0">
           <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
             <span className="material-symbols-rounded sm text-accent">
@@ -84,7 +84,7 @@ export default function CategorizeModal({
           </h2>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+            className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
           >
             <span className="material-symbols-rounded">close</span>
           </button>
@@ -103,7 +103,7 @@ export default function CategorizeModal({
               value={shelf}
               onChange={(e) => setShelf(e.target.value)}
               placeholder="e.g. Currently Reading"
-              className="w-full rounded-md bg-bg-elevated border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent transition-colors"
+              className="w-full rounded-sm bg-bg-elevated border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent transition-colors"
             />
             <datalist id="shelf-suggestions">
               {shelfSuggestions.map((s) => (
@@ -151,7 +151,7 @@ export default function CategorizeModal({
                 }
               }}
               placeholder="Type a tag and press Enter"
-              className="w-full rounded-md bg-bg-elevated border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent transition-colors"
+              className="w-full rounded-sm bg-bg-elevated border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent transition-colors"
             />
 
             {unusedTagSuggestions.length > 0 && (
@@ -173,14 +173,14 @@ export default function CategorizeModal({
         <div className="flex items-center justify-end gap-2 p-5 pt-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+            className="px-4 py-2 rounded-sm text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-sm bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save"}
           </button>

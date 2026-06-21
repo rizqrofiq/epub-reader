@@ -60,9 +60,9 @@ export default function BookCard({
     return (
       <div
         onClick={handleOpen}
-        className="group flex items-center gap-4 p-3 rounded-md bg-bg-secondary border border-border hover:border-accent/30 hover:bg-surface-hover transition-all duration-200 cursor-pointer"
+        className="group flex items-center gap-4 p-3 rounded-sm bg-bg-secondary border border-border hover:border-accent/30 hover:bg-surface-hover transition-all duration-200 cursor-pointer"
       >
-        <div className="w-12 h-16 rounded-md bg-bg-elevated border border-border flex-shrink-0 overflow-hidden flex items-center justify-center">
+        <div className="w-12 h-16 rounded-sm bg-bg-elevated border border-border flex-shrink-0 overflow-hidden flex items-center justify-center">
           {book.cover_url ? (
             <img
               src={book.cover_url}
@@ -86,7 +86,7 @@ export default function BookCard({
           {(book.shelf || (book.tags && book.tags.length > 0)) && (
             <div className="flex flex-wrap items-center gap-1 mt-1">
               {book.shelf && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-bg-elevated border border-border text-text-secondary text-[10px]">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm bg-bg-elevated border border-border text-text-secondary text-[10px]">
                   <span className="material-symbols-rounded !text-[12px]">
                     shelves
                   </span>
@@ -96,7 +96,7 @@ export default function BookCard({
               {book.tags?.map((t) => (
                 <span
                   key={t}
-                  className="px-2 py-0.5 rounded-md bg-accent/10 text-accent text-[10px]"
+                  className="px-2 py-0.5 rounded-sm bg-accent/10 text-accent text-[10px]"
                 >
                   {t}
                 </span>
@@ -125,7 +125,7 @@ export default function BookCard({
               e.stopPropagation();
               onCategorize(book);
             }}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
+            className="p-1.5 rounded-sm text-text-tertiary hover:text-accent hover:bg-accent/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
           >
             <span className="material-symbols-rounded sm">sell</span>
           </button>
@@ -133,7 +133,7 @@ export default function BookCard({
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
+          className="p-1.5 rounded-sm text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
         >
           <span className="material-symbols-rounded sm">delete</span>
         </button>
@@ -142,12 +142,9 @@ export default function BookCard({
   }
 
   return (
-    <div
-      className="group relative cursor-pointer"
-      onClick={handleOpen}
-    >
+    <div className="group relative cursor-pointer" onClick={handleOpen}>
       <div
-        className={`relative overflow-hidden rounded-md bg-bg-secondary border border-border group-hover:border-accent/30 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-accent/5 group-hover:-translate-y-1 ${
+        className={`relative overflow-hidden rounded-sm bg-bg-secondary border border-border group-hover:border-accent/30 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-accent/5 group-hover:-translate-y-1 ${
           compact ? "aspect-[3/4]" : "aspect-[2/3]"
         }`}
       >
@@ -195,7 +192,7 @@ export default function BookCard({
             e.stopPropagation();
             setShowMenu(!showMenu);
           }}
-          className="absolute top-2 right-2 p-1 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-all duration-200 hover:bg-black/60 cursor-pointer"
+          className="absolute top-2 right-2 p-1 rounded-sm bg-black/40 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-all duration-200 hover:bg-black/60 cursor-pointer"
         >
           <span className="material-symbols-rounded sm">more_vert</span>
         </button>
@@ -203,7 +200,7 @@ export default function BookCard({
         {(book.shelf || (book.tags && book.tags.length > 0)) && (
           <div className="absolute top-2 left-2 right-10 flex flex-wrap gap-1 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity duration-300">
             {book.shelf && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px]">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm bg-black/55 backdrop-blur-sm text-white text-[10px]">
                 <span className="material-symbols-rounded !text-[12px]">
                   shelves
                 </span>
@@ -213,13 +210,13 @@ export default function BookCard({
             {book.tags?.slice(0, 2).map((t) => (
               <span
                 key={t}
-                className="px-2 py-0.5 rounded-md bg-accent/85 text-bg-primary text-[10px] font-medium"
+                className="px-2 py-0.5 rounded-sm bg-accent/85 text-bg-primary text-[10px] font-medium"
               >
                 {t}
               </span>
             ))}
             {book.tags && book.tags.length > 2 && (
-              <span className="px-1.5 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px]">
+              <span className="px-1.5 py-0.5 rounded-sm bg-black/55 backdrop-blur-sm text-white text-[10px]">
                 +{book.tags.length - 2}
               </span>
             )}
@@ -228,7 +225,7 @@ export default function BookCard({
 
         {showMenu && (
           <div
-            className="absolute top-10 right-2 w-36 bg-bg-elevated border border-border rounded-md shadow-xl z-10 animate-scale-in overflow-hidden"
+            className="absolute top-10 right-2 w-36 bg-bg-elevated border border-border rounded-sm shadow-xl z-10 animate-scale-in overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <button

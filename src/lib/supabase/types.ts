@@ -6,6 +6,7 @@ export interface Book {
   cover_url: string | null;
   file_hash: string;
   source: "upload" | "google_drive";
+  format: "epub" | "pdf";
   drive_file_id: string | null;
   storage_key: string | null;
   shelf: string | null;
@@ -22,6 +23,7 @@ export interface BookInsert {
   cover_url?: string | null;
   file_hash: string;
   source?: "upload" | "google_drive";
+  format?: "epub" | "pdf";
   drive_file_id?: string | null;
   storage_key?: string | null;
   shelf?: string | null;

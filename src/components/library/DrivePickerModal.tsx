@@ -38,7 +38,7 @@ export default function DrivePickerModal({
           .catch(() => ({ error: null }));
         setError(
           tokenError ||
-            "Google Drive access token not found. Please sign out and sign in again with Google."
+            "Google Drive access token not found. Please sign out and sign in again with Google.",
         );
         setLoading(false);
         return;
@@ -76,43 +76,73 @@ export default function DrivePickerModal({
       }
 
       setStatus("Extracting metadata...");
-      const book = ePub(arrayBuffer);
-      await book.ready;
-      const metadata = await book.loaded.metadata;
+      const isPdf = fileResult.name.toLowerCase().endsWith(".pdf");
+      let result;
+      let bookToDestroy: ReturnType<typeof ePub> | null = null;
 
-      let coverUrl: string | null = null;
-      try {
-        const coverHref = await book.coverUrl();
-        if (coverHref) {
-          const response = await fetch(coverHref);
-          const blob = await response.blob();
-          coverUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(blob);
-          });
-        }
-      } catch {
+      if (isPdf) {
+        const { loadPdf, renderPageThumbnail } =
+          await import("@/lib/pdf/pdf-loader");
+        const doc = await loadPdf(arrayBuffer);
+        const info = await doc.getMetadata().catch(() => null);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const docInfo: any = info?.info || {};
+        const coverUrl = await renderPageThumbnail(doc, 1).catch(() => null);
+
+        setStatus("Saving to library...");
+        result = await addBook(supabase, {
+          title: docInfo.Title || fileResult.name.replace(/\.pdf$/i, ""),
+          author: docInfo.Author || null,
+          cover_url: coverUrl,
+          file_hash: fileHash,
+          source: "google_drive",
+          format: "pdf",
+          storage_key: storageKey,
+          drive_file_id: fileResult.id,
+          file_size: fileResult.sizeBytes,
+          metadata: { pages: doc.numPages, producer: docInfo.Producer },
+        });
+        doc.destroy?.();
+      } else {
+        const book = ePub(arrayBuffer);
+        bookToDestroy = book;
+        await book.ready;
+        const metadata = await book.loaded.metadata;
+
+        let coverUrl: string | null = null;
+        try {
+          const coverHref = await book.coverUrl();
+          if (coverHref) {
+            const response = await fetch(coverHref);
+            const blob = await response.blob();
+            coverUrl = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch {}
+
+        setStatus("Saving to library...");
+        result = await addBook(supabase, {
+          title: metadata.title || fileResult.name.replace(/\.epub$/i, ""),
+          author: metadata.creator || null,
+          cover_url: coverUrl,
+          file_hash: fileHash,
+          source: "google_drive",
+          format: "epub",
+          storage_key: storageKey,
+          drive_file_id: fileResult.id,
+          file_size: fileResult.sizeBytes,
+          metadata: {
+            publisher: metadata.publisher,
+            language: metadata.language,
+            description: metadata.description,
+          },
+        });
       }
 
-      setStatus("Saving to library...");
-      const result = await addBook(supabase, {
-        title: metadata.title || fileResult.name.replace(".epub", ""),
-        author: metadata.creator || null,
-        cover_url: coverUrl,
-        file_hash: fileHash,
-        source: "google_drive",
-        storage_key: storageKey,
-        drive_file_id: fileResult.id,
-        file_size: fileResult.sizeBytes,
-        metadata: {
-          publisher: metadata.publisher,
-          language: metadata.language,
-          description: metadata.description,
-        },
-      });
-
-      book.destroy();
+      bookToDestroy?.destroy();
 
       if (result) {
         onSuccess();
@@ -137,7 +167,7 @@ export default function DrivePickerModal({
         onClick={!loading ? onClose : undefined}
       />
 
-      <div className="relative w-full max-w-md bg-bg-secondary border border-border rounded-md shadow-2xl animate-scale-in">
+      <div className="relative w-full max-w-md bg-bg-secondary border border-border rounded-sm shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between p-6 pb-0">
           <h2 className="text-lg font-semibold text-text-primary">
             Import from Google Drive
@@ -145,7 +175,7 @@ export default function DrivePickerModal({
           <button
             onClick={onClose}
             disabled={loading}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+            className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
           >
             <span className="material-symbols-rounded">close</span>
           </button>
@@ -153,7 +183,7 @@ export default function DrivePickerModal({
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2 animate-slide-up">
+            <div className="mb-4 p-3 rounded-sm bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2 animate-slide-up">
               <span className="material-symbols-rounded sm">error</span>
               {error}
             </div>
@@ -168,22 +198,20 @@ export default function DrivePickerModal({
             </div>
           ) : (
             <div className="flex flex-col items-center gap-4 py-4">
-              <div className="w-16 h-16 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <div className="w-16 h-16 rounded-sm bg-accent/10 border border-accent/20 flex items-center justify-center">
                 <span className="material-symbols-rounded text-accent !text-[32px]">
                   add_to_drive
                 </span>
               </div>
               <p className="text-sm text-text-secondary text-center">
-                Select an EPUB file from your Google Drive. The file will be
-                downloaded and cached locally.
+                Select an EPUB or PDF file from your Google Drive. The file will
+                be downloaded and cached locally.
               </p>
               <button
                 onClick={handleImport}
-                className="flex items-center gap-2 px-6 py-3 rounded-md bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
+                className="flex items-center gap-2 px-6 py-3 rounded-sm bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
               >
-                <span className="material-symbols-rounded sm">
-                  folder_open
-                </span>
+                <span className="material-symbols-rounded sm">folder_open</span>
                 Browse Google Drive
               </button>
             </div>

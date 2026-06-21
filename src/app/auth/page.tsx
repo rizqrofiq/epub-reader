@@ -77,7 +77,7 @@ function AuthForm() {
         </div>
 
         <div className="relative z-10 text-center px-12">
-          <div className="mx-auto mb-8 w-20 h-20 rounded-md bg-accent/15 border border-accent/20 flex items-center justify-center">
+          <div className="mx-auto mb-8 w-20 h-20 rounded-sm bg-accent/15 border border-accent/20 flex items-center justify-center">
             <span className="material-symbols-rounded text-accent !text-[40px]">
               auto_stories
             </span>
@@ -112,7 +112,7 @@ function AuthForm() {
       <div className="flex-1 flex items-center justify-center px-6 py-12 bg-bg-primary">
         <div className="w-full max-w-md">
           <div className="lg:hidden text-center mb-8">
-            <div className="mx-auto mb-4 w-14 h-14 rounded-md bg-accent/15 border border-accent/20 flex items-center justify-center">
+            <div className="mx-auto mb-4 w-14 h-14 rounded-sm bg-accent/15 border border-accent/20 flex items-center justify-center">
               <span className="material-symbols-rounded text-accent !text-[28px]">
                 auto_stories
               </span>
@@ -130,7 +130,7 @@ function AuthForm() {
           </p>
 
           {(error || errorParam) && (
-            <div className="mb-6 p-4 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm animate-slide-up">
+            <div className="mb-6 p-4 rounded-sm bg-destructive/10 border border-destructive/20 text-destructive text-sm animate-slide-up">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-rounded sm">error</span>
                 {error || errorParam}
@@ -141,7 +141,7 @@ function AuthForm() {
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 px-6 py-3.5 rounded-md bg-bg-elevated border border-border hover:border-border-hover hover:bg-surface-hover transition-all duration-200 text-text-primary font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full flex items-center justify-center gap-3 px-6 py-3.5 rounded-sm bg-bg-elevated border border-border hover:border-border-hover hover:bg-surface-hover transition-all duration-200 text-text-primary font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -190,7 +190,7 @@ function AuthForm() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 required
-                className="w-full px-4 py-3 rounded-md bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-text-primary placeholder:text-text-tertiary transition-all duration-200"
+                className="w-full px-4 py-3 rounded-sm bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-text-primary placeholder:text-text-tertiary transition-all duration-200"
               />
             </div>
             <div>
@@ -208,13 +208,13 @@ function AuthForm() {
                 placeholder="••••••••"
                 required
                 minLength={6}
-                className="w-full px-4 py-3 rounded-md bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-text-primary placeholder:text-text-tertiary transition-all duration-200"
+                className="w-full px-4 py-3 rounded-sm bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-text-primary placeholder:text-text-tertiary transition-all duration-200"
               />
             </div>
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 rounded-md bg-accent hover:bg-accent-hover text-bg-primary font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="w-full py-3.5 rounded-sm bg-accent hover:bg-accent-hover text-bg-primary font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

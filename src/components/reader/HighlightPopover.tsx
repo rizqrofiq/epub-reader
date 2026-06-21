@@ -16,6 +16,7 @@ interface HighlightPopoverProps {
   onBookmark: () => void;
   onCopy: () => void;
   onAddNote: (color: string) => void;
+  onAskAI?: () => void;
   onClose: () => void;
 }
 
@@ -27,6 +28,7 @@ export default function HighlightPopover({
   onBookmark,
   onCopy,
   onAddNote,
+  onAskAI,
   onClose,
 }: HighlightPopoverProps) {
   if (!isVisible) return null;
@@ -46,7 +48,7 @@ export default function HighlightPopover({
           transform: "translate(-50%, -100%)",
         }}
       >
-        <div className="bg-[#1a1a1a]/95 backdrop-blur-xl border border-white/15 rounded-md shadow-2xl p-3 min-w-[200px]">
+        <div className="bg-[#1a1a1a]/95 backdrop-blur-xl border border-white/15 rounded-sm shadow-2xl p-3 min-w-[200px]">
           <div className="flex items-center justify-center gap-2.5 mb-3">
             {COLORS.map((color) => (
               <button
@@ -62,9 +64,21 @@ export default function HighlightPopover({
           <div className="h-px bg-white/10 mb-2" />
 
           <div className="flex items-center justify-center gap-1">
+            {onAskAI && (
+              <button
+                onClick={onAskAI}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs text-accent hover:bg-accent/10 transition-all duration-200 cursor-pointer"
+                title="Ask AI"
+              >
+                <span className="material-symbols-rounded sm">
+                  auto_awesome
+                </span>
+                Ask AI
+              </button>
+            )}
             <button
               onClick={() => onAddNote(COLORS[0].hex)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
               title="Add Note"
             >
               <span className="material-symbols-rounded sm">edit_note</span>
@@ -72,22 +86,18 @@ export default function HighlightPopover({
             </button>
             <button
               onClick={onBookmark}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
               title="Bookmark"
             >
-              <span className="material-symbols-rounded sm">
-                bookmark_add
-              </span>
+              <span className="material-symbols-rounded sm">bookmark_add</span>
               Bookmark
             </button>
             <button
               onClick={onCopy}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all duration-200 cursor-pointer"
               title="Copy"
             >
-              <span className="material-symbols-rounded sm">
-                content_copy
-              </span>
+              <span className="material-symbols-rounded sm">content_copy</span>
               Copy
             </button>
           </div>

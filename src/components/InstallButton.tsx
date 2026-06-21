@@ -45,16 +45,14 @@ export default function InstallButton() {
       await deferred.userChoice;
       setDeferred(null);
     } else if (iosHint) {
-      alert(
-        'To install: tap the Share button, then "Add to Home Screen".',
-      );
+      alert('To install: tap the Share button, then "Add to Home Screen".');
     }
   };
 
   return (
     <button
       onClick={handleClick}
-      className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+      className="flex items-center gap-1.5 px-3 py-2 rounded-sm text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
       title="Install Readium"
     >
       <span className="material-symbols-rounded sm">install_desktop</span>

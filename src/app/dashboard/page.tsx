@@ -18,6 +18,7 @@ import DrivePickerModal from "@/components/library/DrivePickerModal";
 import CategorizeModal from "@/components/library/CategorizeModal";
 import NoSSR, { FullScreenSpinner } from "@/components/NoSSR";
 import InstallButton from "@/components/InstallButton";
+import AiSettingsModal from "@/components/ai/AiSettingsModal";
 
 function DashboardPageInner() {
   const [books, setBooks] = useState<Book[]>([]);
@@ -27,6 +28,7 @@ function DashboardPageInner() {
   // Computed after mount to avoid an SSR/client time-of-day hydration mismatch.
   const [greeting, setGreeting] = useState("Welcome");
   const [categorizingBook, setCategorizingBook] = useState<Book | null>(null);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   // Entrance animation should play once on first load — not replay on every
   // search/filter/refetch, which is what caused the "wave" blink.
   const [showEntrance, setShowEntrance] = useState(true);
@@ -205,7 +207,7 @@ function DashboardPageInner() {
       <header className="sticky top-0 z-40 glass border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-md bg-accent/15 border border-accent/20 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-sm bg-accent/15 border border-accent/20 flex items-center justify-center">
               <span className="material-symbols-rounded text-accent !text-[20px]">
                 auto_stories
               </span>
@@ -216,13 +218,23 @@ function DashboardPageInner() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setAiSettingsOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-sm text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+              title="AI Assistant"
+            >
+              <span className="material-symbols-rounded sm text-accent">
+                auto_awesome
+              </span>
+              <span className="hidden sm:inline">AI</span>
+            </button>
             <InstallButton />
             <span className="text-sm text-text-secondary hidden sm:block">
               {userName}
             </span>
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-sm text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
             >
               <span className="material-symbols-rounded sm">logout</span>
               <span className="hidden sm:inline">Sign Out</span>
@@ -267,7 +279,7 @@ function DashboardPageInner() {
             ].map((stat) => (
               <div
                 key={stat.label}
-                className="p-4 rounded-md bg-bg-secondary border border-border hover:border-border-hover transition-all duration-200"
+                className="p-4 rounded-sm bg-bg-secondary border border-border hover:border-border-hover transition-all duration-200"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="material-symbols-rounded sm text-accent">
@@ -323,11 +335,11 @@ function DashboardPageInner() {
                 placeholder="Search books..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-full pl-9 pr-4 rounded-md bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-sm text-text-primary placeholder:text-text-tertiary w-full sm:w-48 transition-all duration-200"
+                className="h-full pl-9 pr-4 rounded-sm bg-bg-elevated border border-border focus:border-accent focus:ring-1 focus:ring-accent/50 outline-none text-sm text-text-primary placeholder:text-text-tertiary w-full sm:w-48 transition-all duration-200"
               />
             </div>
 
-            <div className="flex h-10 rounded-md border border-border overflow-hidden flex-shrink-0">
+            <div className="flex h-10 rounded-sm border border-border overflow-hidden flex-shrink-0">
               <button
                 onClick={() => setViewMode("grid")}
                 className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer ${
@@ -352,7 +364,7 @@ function DashboardPageInner() {
 
             <button
               onClick={() => setDrivePickerOpen(true)}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-md border border-border text-sm text-text-secondary hover:text-text-primary hover:border-border-hover transition-all duration-200 cursor-pointer flex-shrink-0"
+              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-sm border border-border text-sm text-text-secondary hover:text-text-primary hover:border-border-hover transition-all duration-200 cursor-pointer flex-shrink-0"
             >
               <span className="material-symbols-rounded sm">add_to_drive</span>
               <span className="hidden sm:inline">Drive</span>
@@ -360,7 +372,7 @@ function DashboardPageInner() {
 
             <button
               onClick={() => setUploadModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-md bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer flex-shrink-0"
+              className="flex items-center gap-1.5 px-3 sm:px-4 h-10 rounded-sm bg-accent hover:bg-accent-hover text-bg-primary text-sm font-medium transition-all duration-200 cursor-pointer flex-shrink-0"
             >
               <span className="material-symbols-rounded sm">upload_file</span>
               <span className="hidden sm:inline">Upload</span>
@@ -439,7 +451,7 @@ function DashboardPageInner() {
           </div>
         ) : filteredBooks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
-            <div className="w-20 h-20 rounded-md bg-bg-elevated border border-border flex items-center justify-center mb-4">
+            <div className="w-20 h-20 rounded-sm bg-bg-elevated border border-border flex items-center justify-center mb-4">
               <span className="material-symbols-rounded text-text-tertiary !text-[36px]">
                 menu_book
               </span>
@@ -455,7 +467,7 @@ function DashboardPageInner() {
             {!hasActiveFilters && (
               <button
                 onClick={() => setUploadModalOpen(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-md bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-sm bg-accent hover:bg-accent-hover text-bg-primary font-medium transition-all duration-200 cursor-pointer"
               >
                 <span className="material-symbols-rounded sm">upload_file</span>
                 Upload your first book
@@ -509,6 +521,10 @@ function DashboardPageInner() {
         tagSuggestions={allTags}
         onClose={() => setCategorizingBook(null)}
         onSaved={handleCategorized}
+      />
+      <AiSettingsModal
+        isOpen={aiSettingsOpen}
+        onClose={() => setAiSettingsOpen(false)}
       />
     </div>
   );

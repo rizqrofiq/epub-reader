@@ -57,6 +57,22 @@ export async function updateHighlight(
   }
 }
 
+export async function deleteAllHighlights(
+  supabase: SupabaseClient,
+  bookId: string
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("highlights")
+    .delete()
+    .eq("book_id", bookId);
+
+  if (error) {
+    console.error("Error clearing highlights:", error);
+    return false;
+  }
+  return true;
+}
+
 export async function deleteHighlight(
   supabase: SupabaseClient,
   id: string

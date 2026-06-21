@@ -3,9 +3,12 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { getBook } from "@/lib/supabase/queries/books";
+import { getBook, updateBookStorageKey } from "@/lib/supabase/queries/books";
 import { getProgress } from "@/lib/supabase/queries/progress";
-import { getHighlights } from "@/lib/supabase/queries/highlights";
+import {
+  getHighlights,
+  deleteAllHighlights,
+} from "@/lib/supabase/queries/highlights";
 import { getBookmarks } from "@/lib/supabase/queries/bookmarks";
 import { startSession, endSession } from "@/lib/supabase/queries/history";
 import { runOrQueue } from "@/lib/offline-queue";
@@ -16,10 +19,12 @@ import {
   cacheBook,
   getCachedBook,
 } from "@/lib/epub-cache";
-import { downloadEpubFromCloud } from "@/lib/epub-cloud";
+import { downloadEpubFromCloud, uploadEpubToCloud } from "@/lib/epub-cloud";
 import { useReaderStore } from "@/stores/reader-store";
 import type { Book, Highlight, Bookmark } from "@/lib/supabase/types";
 import ReaderView from "@/components/reader/ReaderView";
+import PdfReaderView from "@/components/reader/PdfReaderView";
+import { pageLocator, isPdfLocator } from "@/lib/pdf/pdf-locator";
 import ReaderToolbar from "@/components/reader/ReaderToolbar";
 import ReaderSidebar from "@/components/reader/ReaderSidebar";
 import SettingsPanel from "@/components/reader/SettingsPanel";
@@ -45,6 +50,8 @@ function ReadPageInner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [currentCfi, setCurrentCfi] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [aiPendingText, setAiPendingText] = useState<string | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
@@ -57,6 +64,7 @@ function ReadPageInner() {
     fontFamily,
     lineHeight,
     layout,
+    pdfZoom,
     isSidebarOpen,
     toggleSidebar,
     setSidebarOpen,
@@ -99,6 +107,18 @@ function ReadPageInner() {
         if (cached?.data) {
           setEpubData(cached.data);
           if (cached.locations) setCachedLocations(cached.locations);
+
+          // Self-heal: if this book has local bytes but no cloud backup,
+          // upload it so it can sync to other devices.
+          if (!bookData.storage_key) {
+            const id = bookData.id;
+            const hash = bookData.file_hash;
+            uploadEpubToCloud(hash, cached.data)
+              .then((key) => {
+                if (key) updateBookStorageKey(supabase, id, key);
+              })
+              .catch(() => {});
+          }
         } else {
           let cloudData: ArrayBuffer | null = null;
           try {
@@ -110,16 +130,19 @@ function ReadPageInner() {
 
           if (!cloudData) {
             setError(
-              "EPUB file not found locally or in the cloud. Please re-upload the file.",
+              "File not found locally or in the cloud. Please re-upload it.",
             );
             return;
           }
 
-          await storeEpubFromBuffer(cloudData, bookData.title || "book.epub");
+          await storeEpubFromBuffer(cloudData, bookData.title || "book");
           setEpubData(cloudData);
         }
 
-        if (progress?.cfi && progress.cfi.startsWith("epubcfi(")) {
+        if (
+          progress?.cfi &&
+          (progress.cfi.startsWith("epubcfi(") || isPdfLocator(progress.cfi))
+        ) {
           setLocation(progress.cfi);
           setCurrentChapter(progress.chapter_label || "");
         }
@@ -191,6 +214,26 @@ function ReadPageInner() {
     [supabase, bookId],
   );
 
+  const handlePdfPageChange = useCallback(
+    (page: number, totalPages: number) => {
+      const label = `Page ${page} of ${totalPages}`;
+      setCurrentChapter(label);
+      const locator = pageLocator(page);
+      setCurrentCfi(locator);
+
+      if (progressSaveRef.current) clearTimeout(progressSaveRef.current);
+      progressSaveRef.current = setTimeout(() => {
+        runOrQueue(supabase, "progress.upsert", {
+          bookId,
+          cfi: locator,
+          percentage: totalPages > 0 ? page / totalPages : 0,
+          chapterLabel: label,
+        }).catch(() => {});
+      }, 1500);
+    },
+    [supabase, bookId],
+  );
+
   const handleAddHighlight = useCallback(
     (cfiRange: string, text: string, color: string, note?: string) => {
       const id = crypto.randomUUID();
@@ -221,6 +264,16 @@ function ReadPageInner() {
     },
     [supabase, bookId, currentChapter],
   );
+
+  const handleClearHighlights = useCallback(() => {
+    setShowClearConfirm(true);
+  }, []);
+
+  const confirmClearHighlights = useCallback(async () => {
+    setShowClearConfirm(false);
+    setHighlights([]);
+    await deleteAllHighlights(supabase, bookId);
+  }, [supabase, bookId]);
 
   const handleDeleteHighlight = useCallback(
     (id: string) => {
@@ -405,27 +458,62 @@ function ReadPageInner() {
       <SettingsPanel
         isOpen={isSettingsOpen}
         onClose={() => setSettingsOpen(false)}
+        format={book?.format}
       />
 
-      <div onClick={handleReaderClick} className="h-screen">
-        <ReaderView
-          url={epubData}
-          location={location}
-          onLocationChange={setLocation}
-          onProgressUpdate={handleProgressUpdate}
+      {book?.format === "pdf" ? (
+        <PdfReaderView
+          data={epubData}
+          initialLocator={
+            typeof location === "string" && isPdfLocator(location)
+              ? location
+              : null
+          }
+          zoom={pdfZoom}
           theme={theme}
-          fontSize={fontSize}
-          fontFamily={fontFamily}
-          lineHeight={lineHeight}
           layout={layout}
           highlights={highlights}
+          onPageChange={handlePdfPageChange}
           onAddHighlight={handleAddHighlight}
+          onAskAI={(text) => {
+            setAiPendingText(text);
+            setSidebarOpen(true);
+            setActiveSidebarTab("ai");
+          }}
           onTocLoaded={setToc}
-          renditionRef={renditionRef}
-          cachedLocations={cachedLocations}
-          onLocationsGenerated={handleLocationsGenerated}
+          gotoLocator={
+            typeof location === "string" && isPdfLocator(location)
+              ? location
+              : null
+          }
+          docRef={renditionRef}
         />
-      </div>
+      ) : (
+        <div onClick={handleReaderClick} className="h-screen">
+          <ReaderView
+            url={epubData}
+            location={location}
+            onLocationChange={setLocation}
+            onProgressUpdate={handleProgressUpdate}
+            theme={theme}
+            fontSize={fontSize}
+            fontFamily={fontFamily}
+            lineHeight={lineHeight}
+            layout={layout}
+            highlights={highlights}
+            onAddHighlight={handleAddHighlight}
+            onAskAI={(text) => {
+              setAiPendingText(text);
+              setSidebarOpen(true);
+              setActiveSidebarTab("ai");
+            }}
+            onTocLoaded={setToc}
+            renditionRef={renditionRef}
+            cachedLocations={cachedLocations}
+            onLocationsGenerated={handleLocationsGenerated}
+          />
+        </div>
+      )}
 
       <ReaderSidebar
         isOpen={isSidebarOpen}
@@ -438,9 +526,48 @@ function ReadPageInner() {
         onNavigate={handleNavigate}
         onDeleteBookmark={handleDeleteBookmark}
         onDeleteHighlight={handleDeleteHighlight}
+        onClearHighlights={handleClearHighlights}
         searchResults={searchResults}
         onSearch={handleSearch}
+        bookId={bookId}
+        bookTitle={book?.title}
+        chapterLabel={currentChapter}
+        aiPendingText={aiPendingText}
+        onAiPendingConsumed={() => setAiPendingText(null)}
       />
+
+      {/* Clear highlights confirmation */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowClearConfirm(false)}
+          />
+          <div className="relative w-full max-w-sm bg-bg-secondary border border-border rounded-sm shadow-2xl p-6 animate-scale-in">
+            <h2 className="text-base font-semibold text-text-primary mb-2">
+              Clear all highlights?
+            </h2>
+            <p className="text-sm text-text-secondary mb-6">
+              This will permanently delete all highlights in this book. This
+              cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="px-4 py-2 rounded-sm text-sm text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmClearHighlights}
+                className="px-4 py-2 rounded-sm bg-destructive hover:bg-destructive-hover text-white text-sm font-medium transition-all duration-200 cursor-pointer"
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

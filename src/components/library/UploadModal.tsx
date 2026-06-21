@@ -27,8 +27,11 @@ export default function UploadModal({
 
   const processFile = useCallback(
     async (file: File) => {
-      if (!file.name.toLowerCase().endsWith(".epub")) {
-        setError("Please select an EPUB file");
+      const name = file.name.toLowerCase();
+      const isPdf = name.endsWith(".pdf");
+      const isEpub = name.endsWith(".epub");
+      if (!isPdf && !isEpub) {
+        setError("Please select an EPUB or PDF file");
         return;
       }
 
@@ -61,57 +64,84 @@ export default function UploadModal({
         }
 
         setStatus("Extracting metadata...");
-        const book = ePub(arrayBuffer);
-        await book.ready;
+        let saved;
 
-        const metadata = await book.loaded.metadata;
-        let coverUrl: string | null = null;
+        if (isPdf) {
+          const { loadPdf, renderPageThumbnail } =
+            await import("@/lib/pdf/pdf-loader");
+          const doc = await loadPdf(arrayBuffer);
+          const info = await doc.getMetadata().catch(() => null);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const docInfo: any = info?.info || {};
+          const coverUrl = await renderPageThumbnail(doc, 1).catch(() => null);
 
-        try {
-          const coverHref = await book.coverUrl();
-          if (coverHref) {
-            const response = await fetch(coverHref);
-            const blob = await response.blob();
-            coverUrl = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.readAsDataURL(blob);
-            });
-          }
-        } catch {
+          setStatus("Saving to library...");
+          saved = await addBook(supabase, {
+            title: docInfo.Title || file.name.replace(/\.pdf$/i, ""),
+            author: docInfo.Author || null,
+            cover_url: coverUrl,
+            file_hash: fileHash,
+            source: "upload",
+            format: "pdf",
+            storage_key: storageKey,
+            file_size: file.size,
+            metadata: {
+              pages: doc.numPages,
+              producer: docInfo.Producer,
+            },
+          });
+          doc.destroy?.();
+        } else {
+          const book = ePub(arrayBuffer);
+          await book.ready;
+          const metadata = await book.loaded.metadata;
+          let coverUrl: string | null = null;
+          try {
+            const coverHref = await book.coverUrl();
+            if (coverHref) {
+              const response = await fetch(coverHref);
+              const blob = await response.blob();
+              coverUrl = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.readAsDataURL(blob);
+              });
+            }
+          } catch {}
+
+          setStatus("Saving to library...");
+          saved = await addBook(supabase, {
+            title: metadata.title || file.name.replace(/\.epub$/i, ""),
+            author: metadata.creator || null,
+            cover_url: coverUrl,
+            file_hash: fileHash,
+            source: "upload",
+            format: "epub",
+            storage_key: storageKey,
+            file_size: file.size,
+            metadata: {
+              publisher: metadata.publisher,
+              language: metadata.language,
+              description: metadata.description,
+            },
+          });
+          book.destroy();
         }
 
-        setStatus("Saving to library...");
-        const result = await addBook(supabase, {
-          title: metadata.title || file.name.replace(".epub", ""),
-          author: metadata.creator || null,
-          cover_url: coverUrl,
-          file_hash: fileHash,
-          source: "upload",
-          storage_key: storageKey,
-          file_size: file.size,
-          metadata: {
-            publisher: metadata.publisher,
-            language: metadata.language,
-            description: metadata.description,
-          },
-        });
-
-        if (result) {
-          book.destroy();
+        if (saved) {
           onSuccess();
         } else {
           setError("Failed to save book metadata");
         }
       } catch (err) {
         console.error("Upload error:", err);
-        setError("Failed to process EPUB file");
+        setError("Failed to process file");
       } finally {
         setUploading(false);
         setStatus("");
       }
     },
-    [supabase, onSuccess]
+    [supabase, onSuccess],
   );
 
   const handleDrop = useCallback(
@@ -121,7 +151,7 @@ export default function UploadModal({
       const file = e.dataTransfer.files[0];
       if (file) processFile(file);
     },
-    [processFile]
+    [processFile],
   );
 
   const handleFileSelect = useCallback(
@@ -129,7 +159,7 @@ export default function UploadModal({
       const file = e.target.files?.[0];
       if (file) processFile(file);
     },
-    [processFile]
+    [processFile],
   );
 
   if (!isOpen) return null;
@@ -141,15 +171,15 @@ export default function UploadModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-lg bg-bg-secondary border border-border rounded-md shadow-2xl animate-scale-in">
+      <div className="relative w-full max-w-lg bg-bg-secondary border border-border rounded-sm shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between p-6 pb-0">
           <h2 className="text-lg font-semibold text-text-primary">
-            Upload EPUB
+            Upload Book
           </h2>
           <button
             onClick={onClose}
             disabled={uploading}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
+            className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer"
           >
             <span className="material-symbols-rounded">close</span>
           </button>
@@ -157,7 +187,7 @@ export default function UploadModal({
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2 animate-slide-up">
+            <div className="mb-4 p-3 rounded-sm bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2 animate-slide-up">
               <span className="material-symbols-rounded sm">error</span>
               {error}
             </div>
@@ -171,7 +201,7 @@ export default function UploadModal({
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
             onClick={() => !uploading && fileInputRef.current?.click()}
-            className={`relative border-2 border-dashed rounded-md p-10 text-center transition-all duration-200 cursor-pointer ${
+            className={`relative border-2 border-dashed rounded-sm p-10 text-center transition-all duration-200 cursor-pointer ${
               isDragging
                 ? "border-accent bg-accent/5"
                 : "border-border hover:border-border-hover hover:bg-bg-elevated/50"
@@ -180,7 +210,7 @@ export default function UploadModal({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".epub"
+              accept=".epub,.pdf"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -198,10 +228,10 @@ export default function UploadModal({
                   upload_file
                 </span>
                 <p className="text-sm text-text-primary font-medium mb-1">
-                  Drop your EPUB here, or click to browse
+                  Drop your EPUB or PDF here, or click to browse
                 </p>
                 <p className="text-xs text-text-tertiary">
-                  EPUB files up to 100MB
+                  EPUB or PDF files up to 100MB
                 </p>
               </>
             )}
