@@ -38,15 +38,12 @@ db.version(3).stores({
   covers: "bookId",
 });
 
-// Book metadata cache — lets the reader open a cached EPUB while offline,
-// when Supabase is unreachable.
 db.version(4).stores({
   epubFiles: "fileHash, fileName, addedAt",
   covers: "bookId",
   books: "id, updated_at",
 });
 
-// Outbox — writes made while offline, replayed when back online.
 db.version(5).stores({
   epubFiles: "fileHash, fileName, addedAt",
   covers: "bookId",

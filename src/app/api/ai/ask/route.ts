@@ -1,41 +1,15 @@
+import { tool, jsonSchema, type ToolSet } from "ai";
 import { createClient } from "@/lib/supabase/server";
 import { decryptKey } from "@/lib/ai/crypto";
-import { getProvider, PROVIDERS } from "@/lib/ai/provider";
-import Anthropic from "@anthropic-ai/sdk";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { getProviderMeta, isProviderId } from "@/lib/ai/provider";
+import type { BookSource } from "@/lib/ai/provider";
+import { streamAnswer } from "@/lib/ai/stream";
+import { summarizeHistory } from "@/lib/ai/summary";
+import { isBookIndexed, searchBookChunks, type BookPassage } from "@/lib/rag/server";
 
-// Persists the user's turn and auto-titles the session. Awaited inside the
-// stream so the write completes within the request lifecycle (Cloudflare
-// Workers drop un-awaited promises once the response ends).
-async function persistUserTurn(
-  supabase: SupabaseClient,
-  sessionId: string,
-  userDisplayText: string,
-): Promise<void> {
-  const { error } = await supabase.from("ai_chat_messages").insert({
-    session_id: sessionId,
-    role: "user",
-    content: userDisplayText,
-  });
-  if (error) {
-    throw new Error(`user message insert: ${error.message} (${error.code})`);
-  }
-  const { data: session } = await supabase
-    .from("ai_chat_sessions")
-    .select("title")
-    .eq("id", sessionId)
-    .single();
-  await supabase
-    .from("ai_chat_sessions")
-    .update({
-      ...(session?.title === "New chat"
-        ? { title: userDisplayText.slice(0, 60) }
-        : {}),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId);
+function snippet(text: string): string {
+  return text.length > 160 ? text.slice(0, 160) + "…" : text;
 }
-
 // How many recent turns to always include verbatim. Older turns are replaced
 // by the harness summary.
 const RECENT_TURNS = 20;
@@ -55,11 +29,18 @@ interface AskBody {
   chapterLabel?: string;
   // Session context
   sessionId?: string;
+  bookId?: string;
   history?: HistoryMessage[];
   contextSummary?: string | null;
+  // User-controlled web-search toggle (fact-check always searches regardless).
+  webSearch?: boolean;
 }
 
-function buildSystem(body: AskBody): string {
+function buildSystem(
+  body: AskBody,
+  webSearch: boolean,
+  hasBook: boolean,
+): string {
   const where = [
     body.bookTitle ? `the book "${body.bookTitle}"` : "a book",
     body.chapterLabel ? `(${body.chapterLabel})` : "",
@@ -67,15 +48,31 @@ function buildSystem(body: AskBody): string {
     .filter(Boolean)
     .join(" ");
 
+  // Make the answer's behavior match the web-search toggle, so the grounding
+  // badge ("Searched the web" vs "model's own knowledge") is truthful: when on,
+  // push the model to actually search; when off, forbid pretending it did.
+  const webRule = webSearch
+    ? `Web search is ON: actively search the web to verify factual claims, dates, names and anything that may be current, and cite the sources you used. Prefer searching over answering from memory for factual questions.`
+    : `Web search is OFF: answer only from your own knowledge and the provided context. Do not claim or imply that you searched the web, and do not invent sources.`;
+
+  const bookRule = hasBook
+    ? ` The book the user is reading is searchable: for any question about the book, call the search_book tool to find relevant passages and ground your answer in the book's real content before relying on general knowledge.`
+    : "";
+
   return (
     `You are a reading companion embedded in an e-reader. ` +
     `The user is reading ${where}. ` +
-    `Be concise and clear. When you use web search, cite your sources. Do not pad with preamble — answer directly. ` +
-    `Do not use markdown syntax (no **, no ##, no backticks, no bullet dashes) — write in plain prose only.`
+    `Be concise and clear. Do not pad with preamble — answer directly. ${webRule}${bookRule} ` +
+    `Format your answer in Markdown: use **bold** for emphasis, bullet or numbered lists for multiple points, ` +
+    `and short headings only when they genuinely help. Keep it tight — prefer prose for short answers. ` +
+    `For any math, use LaTeX delimited by $…$ for inline and $$…$$ for display equations (e.g. $L = kY - hi$).`
   );
 }
 
-function buildUserMessage(body: AskBody): {
+function buildUserMessage(
+  body: AskBody,
+  allowWeb: boolean,
+): {
   text: string; // full prompt sent to Claude (may include passage context)
   displayText: string; // clean label shown in chat UI and stored in DB
   webSearch: boolean;
@@ -85,13 +82,18 @@ function buildUserMessage(body: AskBody): {
     ? `Highlighted passage:\n"""\n${body.selectedText.slice(0, 6000)}\n"""\n\n`
     : "";
 
+  // Web search is opt-in via the UI toggle (fact-check wants it by default), but
+  // only when the provider actually supports it — otherwise we'd tell the model
+  // to search with no tool wired up, which yields an empty response.
+  const wantsWeb = !!body.webSearch && allowWeb;
+
   if (body.mode === "factcheck") {
     return {
-      text: `${passage}Fact-check the claims in this passage. Search the web to verify, and cite sources for anything you confirm or refute. Note clearly what is accurate, what is wrong, and what is uncertain.`,
+      text: `${passage}Fact-check the claims in this passage. ${allowWeb ? "Search the web to verify, and cite sources for anything you confirm or refute. " : ""}Note clearly what is accurate, what is wrong, and what is uncertain.`,
       displayText: body.selectedText
         ? `Fact-check: "${body.selectedText.slice(0, 80)}..."`
         : "Fact-check this passage",
-      webSearch: true,
+      webSearch: allowWeb,
       effort: "high",
     };
   }
@@ -101,16 +103,23 @@ function buildUserMessage(body: AskBody): {
       displayText: body.selectedText
         ? `Explain: "${body.selectedText.slice(0, 80)}..."`
         : "Explain this passage",
-      webSearch: false,
+      webSearch: wantsWeb,
       effort: "medium",
     };
   }
-  // "ask" mode — free-form question
+  // "ask" mode — free-form question. The highlighted passage (if any) is pinned
+  // background context, NOT the subject. Earlier this prepended the passage
+  // before the question, which made the model re-explain the passage instead of
+  // answering follow-ups — so we frame it explicitly as optional reference.
   const question = body.question || "Explain this.";
+  const context = body.selectedText
+    ? `For context, the user has this passage pinned from their book:\n"""\n${body.selectedText.slice(0, 6000)}\n"""\n\n` +
+      `Answer the question below directly and conversationally. Only use the passage if it's relevant, and don't restate or summarize it unless asked.\n\n`
+    : "";
   return {
-    text: `${passage}${question}`,
+    text: `${context}Question: ${question}`,
     displayText: question,
-    webSearch: true,
+    webSearch: wantsWeb,
     effort: "high",
   };
 }
@@ -145,49 +154,6 @@ function buildMessages(
   return messages;
 }
 
-/** Generate a summary of old turns using a fast, cheap model call.
- *  This is the "harness" — it compresses history > RECENT_TURNS into a
- *  paragraph so the full conversation context is never lost. */
-async function generateSummary(
-  apiKey: string,
-  baseUrl: string | undefined,
-  oldTurns: HistoryMessage[],
-  existingSummary: string | null | undefined,
-): Promise<string> {
-  const client = new Anthropic({
-    apiKey,
-    ...(baseUrl ? { baseURL: baseUrl } : {}),
-  });
-
-  const prior = existingSummary
-    ? `Previous summary:\n${existingSummary}\n\n`
-    : "";
-
-  const turns = oldTurns
-    .map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.content}`)
-    .join("\n\n");
-
-  const msg = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 512,
-    messages: [
-      {
-        role: "user",
-        content:
-          `${prior}Summarize the following conversation turns into 2-4 concise paragraphs. ` +
-          `Preserve key questions, passages discussed, and conclusions. ` +
-          `Write in third-person ("the user asked…", "the AI explained…").\n\n` +
-          turns,
-      },
-    ],
-  });
-
-  return msg.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { type: "text"; text: string }).text)
-    .join("");
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -206,14 +172,27 @@ export async function POST(request: Request) {
     });
   }
 
-  // Load the user's most-recently-updated AI credential.
-  const { data: cred } = await supabase
+  // Use the user's explicitly-active credential; fall back to the most-recently
+  // updated one (also covers older DBs without the is_active column).
+  const credSelect = "provider, encrypted_key, model, base_url";
+  const active = await supabase
     .from("ai_credentials")
-    .select("provider, encrypted_key, model, base_url")
+    .select(credSelect)
     .eq("user_id", user.id)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .single();
+    .eq("is_active", true)
+    .maybeSingle();
+
+  let cred = active.data;
+  if (!cred) {
+    const recent = await supabase
+      .from("ai_credentials")
+      .select(credSelect)
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    cred = recent.data;
+  }
 
   if (!cred) {
     return new Response(
@@ -232,30 +211,125 @@ export async function POST(request: Request) {
     );
   }
 
-  const providerMeta = PROVIDERS.find((p) => p.id === cred.provider);
-  const model = cred.model || providerMeta?.defaultModel || "claude-opus-4-5";
-  const system = buildSystem(body);
-  const {
-    text: userMsgText,
-    displayText: userDisplayText,
-    webSearch,
-    effort,
-  } = buildUserMessage(body);
+  if (!isProviderId(cred.provider)) {
+    return new Response(
+      JSON.stringify({ error: `Unsupported provider: ${cred.provider}` }),
+      { status: 412 },
+    );
+  }
+  const providerId = cred.provider;
+  const providerMeta = getProviderMeta(providerId);
+  const model = cred.model || providerMeta?.defaultModel;
+  if (!model) {
+    return new Response(
+      JSON.stringify({ error: "No model configured for this provider" }),
+      { status: 412 },
+    );
+  }
+  const allowWeb = providerMeta?.supportsWebSearch ?? false;
+  const { text: userMsgText, webSearch, effort } = buildUserMessage(
+    body,
+    allowWeb,
+  );
+
+  // ── RAG: expose the book as a search_book tool the model calls on demand ────
+  // Resolve which book this turn is about (explicit, or via the session).
+  let bookId = body.bookId ?? null;
+  if (!bookId && body.sessionId) {
+    const { data: s } = await supabase
+      .from("ai_chat_sessions")
+      .select("book_id")
+      .eq("id", body.sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    bookId = s?.book_id ?? null;
+  }
+
+  // Passages the model retrieves via the tool — collected for the UI + badge.
+  const collectedBookSources: BookSource[] = [];
+  let bookTool: ToolSet | undefined;
+  const hasBook = await isBookIndexed(supabase, user.id, bookId);
+  if (hasBook && bookId) {
+    const theBookId = bookId;
+    bookTool = {
+      search_book: tool({
+        description:
+          "Search the full text of the book the user is currently reading and " +
+          "return the most relevant passages. Use it for any question about the " +
+          "book to ground your answer in its actual content before relying on " +
+          "general knowledge. Pass CONCISE KEYWORDS (names, terms, numbers) — " +
+          "not a full sentence. If nothing relevant comes back, retry with " +
+          "simpler or alternative keywords before concluding the book doesn't " +
+          "cover it.",
+        inputSchema: jsonSchema<{ query: string }>({
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description:
+                "Concise search keywords, e.g. 'komisaris utama' — not a full question.",
+            },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        }),
+        execute: async ({ query }) => {
+          let passages: BookPassage[];
+          try {
+            passages = await searchBookChunks(
+              supabase,
+              user.id,
+              theBookId,
+              query,
+            );
+          } catch {
+            return (
+              "Book search is unavailable right now (the search index may not be " +
+              "set up). Tell the user book search isn't working rather than " +
+              "claiming the book doesn't contain this information."
+            );
+          }
+          for (const p of passages) {
+            const snip = snippet(p.content);
+            if (
+              !collectedBookSources.some(
+                (s) => s.chapter === p.chapter && s.snippet === snip,
+              )
+            ) {
+              collectedBookSources.push({
+                chapter: p.chapter,
+                cfi: p.cfi,
+                snippet: snip,
+              });
+            }
+          }
+          if (!passages.length) return "No matching passages found in the book.";
+          return passages
+            .map((p, i) => `[${i + 1}] (${p.chapter}) ${p.content}`)
+            .join("\n\n");
+        },
+      }),
+    };
+  }
+
+  const system = buildSystem(body, webSearch, hasBook);
 
   // ── Harness: summarise old turns before building the message array ─────────
   const history: HistoryMessage[] = body.history ?? [];
   let contextSummary = body.contextSummary ?? null;
   const needsSummary = history.length > RECENT_TURNS;
 
-  if (needsSummary && cred.provider === "anthropic") {
+  if (needsSummary) {
     const oldTurns = history.slice(0, history.length - RECENT_TURNS);
     try {
-      contextSummary = await generateSummary(
+      contextSummary = await summarizeHistory({
+        providerId,
         apiKey,
-        cred.base_url || undefined,
+        baseUrl: cred.base_url || undefined,
+        model,
         oldTurns,
-        contextSummary,
-      );
+        existingSummary: contextSummary,
+      });
       // Persist the updated summary back to the session
       if (body.sessionId) {
         await supabase
@@ -271,22 +345,10 @@ export async function POST(request: Request) {
 
   const messages = buildMessages(history, userMsgText, contextSummary);
 
-  // Persist the user's turn concurrently with streaming. We hold the promise
-  // and await it in the stream's finally so the write isn't dropped on Workers.
-  const sessionId = body.sessionId;
-  // Resolves to an error string if the write failed, else null. We surface it
-  // as a non-fatal `warn` event so the real cause is visible in the console.
-  const userPersist: Promise<string | null> = sessionId
-    ? persistUserTurn(supabase, sessionId, userDisplayText).then(
-        () => null,
-        (e) => (e instanceof Error ? e.message : String(e)),
-      )
-    : Promise.resolve(null);
-
-  const provider = await getProvider(cred.provider);
   const encoder = new TextEncoder();
-  let assistantText = "";
-  let assistantCitations: unknown[] = [];
+  let assistantCitations: { url: string; title: string }[] = [];
+  // Whether a provider-executed WEB search ran this turn (excludes search_book).
+  let searchedWeb = false;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -297,25 +359,54 @@ export async function POST(request: Request) {
       // Flush HTTP headers immediately (avoids "pending" in browser).
       ping();
 
-      console.log(apiKey, cred.base_url);
-
       try {
-        for await (const ev of provider.streamAnswer({
-          apiKey,
-          baseUrl: cred.base_url || undefined,
-          model,
-          system,
-          messages,
-          webSearch,
-          effort,
-        })) {
+        for await (const ev of streamAnswer(
+          {
+            providerId,
+            apiKey,
+            baseUrl: cred.base_url || undefined,
+            model,
+            system,
+            messages,
+            webSearch,
+            effort,
+          },
+          bookTool,
+        )) {
           if (ev.type === "thinking") {
             ping(); // keep-alive during thinking phase
           } else if (ev.type === "text") {
-            assistantText += ev.text;
             send(ev);
+          } else if (ev.type === "tool") {
+            // search_book is our book lookup; anything else is a web search.
+            if (ev.name !== "search_book") {
+              searchedWeb = true;
+              send(ev); // lets the UI show "Searching the web…" live
+            }
           } else if (ev.type === "citations") {
             assistantCitations = ev.citations;
+            send(ev);
+          } else if (ev.type === "done") {
+            // Emit how this answer was grounded just before closing it out.
+            // Citations imply a web search ran even without a tool-call event.
+            const usedWeb = searchedWeb || assistantCitations.length > 0;
+            const usedBook = collectedBookSources.length > 0;
+            const kind = usedWeb
+              ? "web"
+              : usedBook
+                ? "book"
+                : body.selectedText
+                  ? "passage"
+                  : "model";
+            if (usedBook)
+              send({ type: "bookSources", sources: collectedBookSources });
+            send({
+              type: "grounding",
+              kind,
+              sources: kind === "book"
+                ? collectedBookSources.length
+                : assistantCitations.length,
+            });
             send(ev);
           } else {
             send(ev);
@@ -327,44 +418,9 @@ export async function POST(request: Request) {
           error: err instanceof Error ? err.message : "AI request failed",
         });
       } finally {
-        // Persist BOTH turns before closing the response. On Cloudflare Workers
-        // anything not awaited within the request lifecycle is dropped once the
-        // response ends — which is why reopened sessions had no messages.
-        try {
-          const userErr = await userPersist;
-          let asstErr: string | null = null;
-          if (sessionId && assistantText) {
-            const { error } = await supabase.from("ai_chat_messages").insert({
-              session_id: sessionId,
-              role: "assistant",
-              content: assistantText,
-              citations: assistantCitations,
-            });
-            if (error)
-              asstErr = `assistant message insert: ${error.message} (${error.code})`;
-          }
-          const persistErr = userErr || asstErr;
-          if (persistErr) {
-            try {
-              send({
-                type: "warn",
-                warn: `Persistence failed — ${persistErr}`,
-              });
-            } catch {
-              // controller may already be closed
-            }
-          }
-        } catch (e) {
-          // non-fatal — don't fail the response on a persistence error
-          try {
-            send({
-              type: "warn",
-              warn: `Persistence failed — ${e instanceof Error ? e.message : String(e)}`,
-            });
-          } catch {
-            // controller may already be closed
-          }
-        }
+        // Persistence of both turns happens in an after() callback (registered
+        // below) rather than here — doing DB writes inside the streaming
+        // response gets them dropped on Cloudflare Workers once the stream ends.
         // Emit updated summary so the client can cache it.
         try {
           if (needsSummary && contextSummary) {
@@ -381,6 +437,10 @@ export async function POST(request: Request) {
       }
     },
   });
+
+  // Note: chat turns are persisted by the client over normal POST requests to
+  // /api/ai/sessions/[id]/messages — NOT here. Writing inside this streaming
+  // response dropped the messages on Cloudflare Workers once the stream closed.
 
   return new Response(stream, {
     headers: {

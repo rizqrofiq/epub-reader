@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { askAI } from "@/lib/ai/client";
-import type { Citation } from "@/lib/ai/provider";
+import type { Citation, Grounding } from "@/lib/ai/provider";
+import Markdown from "./Markdown";
+import GroundingBadge from "./GroundingBadge";
 
 interface AskAiPanelProps {
   isOpen: boolean;
@@ -23,6 +25,8 @@ export default function AskAiPanel({
 }: AskAiPanelProps) {
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
+  const [grounding, setGrounding] = useState<Grounding | undefined>(undefined);
+  const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -48,6 +52,8 @@ export default function AskAiPanel({
       abortRef.current = ctrl;
       setAnswer("");
       setCitations([]);
+      setGrounding(undefined);
+      setSearching(false);
       setError(null);
       setLoading(true);
       askAI(
@@ -60,6 +66,11 @@ export default function AskAiPanel({
         },
         {
           onText: (chunk) => setAnswer((a) => a + chunk),
+          onTool: () => setSearching(true),
+          onGrounding: (g) => {
+            setGrounding(g);
+            setSearching(false);
+          },
           onCitations: (c) => setCitations(c),
           onError: (e) => {
             setError(e);
@@ -149,12 +160,18 @@ export default function AskAiPanel({
 
           {(answer || loading) && (
             <div className="rounded-sm bg-bg-elevated/60 border border-border p-3">
-              <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
-                {answer}
+              <div className="text-sm text-text-primary leading-relaxed">
+                <Markdown>{answer}</Markdown>
                 {loading && (
                   <span className="inline-block w-2 h-4 ml-0.5 bg-accent/70 animate-pulse align-middle" />
                 )}
-              </p>
+              </div>
+
+              {(grounding || searching) && (
+                <div className="mt-2">
+                  <GroundingBadge grounding={grounding} searching={searching} />
+                </div>
+              )}
 
               {citations.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-border space-y-1.5">

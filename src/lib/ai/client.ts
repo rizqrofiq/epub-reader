@@ -1,4 +1,4 @@
-import type { Citation } from "@/lib/ai/provider";
+import type { Citation, Grounding, BookSource } from "@/lib/ai/provider";
 
 export interface AskHandlers {
   onText: (chunk: string) => void;
@@ -6,6 +6,9 @@ export interface AskHandlers {
   onError?: (error: string) => void;
   onDone?: () => void;
   onSummary?: (contextSummary: string) => void;
+  onTool?: (name: string) => void;
+  onGrounding?: (grounding: Grounding) => void;
+  onBookSources?: (sources: BookSource[]) => void;
 }
 
 export interface AskRequest {
@@ -14,13 +17,13 @@ export interface AskRequest {
   question?: string;
   bookTitle?: string;
   chapterLabel?: string;
-  // Session context for multi-turn + persistence
   sessionId?: string;
+  bookId?: string;
   history?: { role: "user" | "assistant"; content: string }[];
   contextSummary?: string | null;
+  webSearch?: boolean;
 }
 
-// Streams an AI answer from /api/ai/ask, parsing the SSE events.
 export async function askAI(
   req: AskRequest,
   handlers: AskHandlers,
@@ -64,6 +67,9 @@ export async function askAI(
       try {
         const ev = JSON.parse(json);
         if (ev.type === "text") handlers.onText(ev.text);
+        else if (ev.type === "tool") handlers.onTool?.(ev.name);
+        else if (ev.type === "grounding") handlers.onGrounding?.(ev);
+        else if (ev.type === "bookSources") handlers.onBookSources?.(ev.sources);
         else if (ev.type === "citations") handlers.onCitations?.(ev.citations);
         else if (ev.type === "error") handlers.onError?.(ev.error);
         else if (ev.type === "warn") console.warn("[askAI]", ev.warn);
@@ -81,6 +87,20 @@ export interface AiCredential {
   model: string | null;
   base_url: string | null;
   updated_at: string;
+  is_active?: boolean;
+}
+
+export async function activateAiProvider(
+  provider: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/ai/credentials", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
+  if (res.ok) return { ok: true };
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  return { ok: false, error: json.error || `Failed (${res.status})` };
 }
 
 export async function getAiCredentials(): Promise<AiCredential[]> {

@@ -23,6 +23,7 @@ interface ReaderSidebarProps {
   chapterLabel?: string;
   aiPendingText?: string | null;
   onAiPendingConsumed?: () => void;
+  onJumpToSource?: (cfi: string) => void;
 }
 
 const TABS = [
@@ -30,7 +31,7 @@ const TABS = [
   { id: "bookmarks", icon: "bookmark", label: "Bookmarks" },
   { id: "highlights", icon: "ink_highlighter", label: "Highlights" },
   { id: "search", icon: "search", label: "Search" },
-  { id: "ai", icon: "auto_awesome", label: "AI" },
+  { id: "ai", icon: "auto_awesome", label: "Assistant" },
 ];
 
 export default function ReaderSidebar({
@@ -52,6 +53,7 @@ export default function ReaderSidebar({
   chapterLabel,
   aiPendingText,
   onAiPendingConsumed,
+  onJumpToSource,
 }: ReaderSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -64,17 +66,15 @@ export default function ReaderSidebar({
     <>
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 animate-fade-in"
+          className="fixed inset-0 bg-black/40 z-40 animate-fade-in lg:hidden"
           onClick={onClose}
         />
       )}
 
       <div
-        className={`fixed top-0 right-0 h-full w-full sm:w-[380px] z-50 bg-[#171717]/95 backdrop-blur-2xl border-l border-white/10 transition-transform duration-300 ease-out flex flex-col ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={`fixed top-0 right-0 h-full w-full sm:w-[380px] z-50 bg-[#171717]/95 backdrop-blur-2xl border-l border-white/10 transition-transform duration-300 ease-out flex flex-col ${isOpen ? "translate-x-0" : "translate-x-full"
+          }`}
       >
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
           <h2 className="text-base font-semibold text-white">
             {TABS.find((t) => t.id === activeTab)?.label}
@@ -87,17 +87,15 @@ export default function ReaderSidebar({
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="flex border-b border-white/10 flex-shrink-0">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs transition-all duration-200 cursor-pointer ${
-                activeTab === tab.id
-                  ? "text-[#3ECF8E] border-b-2 border-[#3ECF8E]"
-                  : "text-white/50 hover:text-white/80"
-              }`}
+              className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs transition-all duration-200 cursor-pointer ${activeTab === tab.id
+                ? "text-[#3ECF8E] border-b-2 border-[#3ECF8E]"
+                : "text-white/50 hover:text-white/80"
+                }`}
             >
               <span className="material-symbols-rounded sm">{tab.icon}</span>
               <span>{tab.label}</span>
@@ -105,9 +103,7 @@ export default function ReaderSidebar({
           ))}
         </div>
 
-        {/* Tab content */}
         {activeTab === "ai" ? (
-          // AI tab gets flex layout to fill remaining height
           <div className="flex-1 min-h-0 flex flex-col">
             <AiChatTab
               bookId={bookId}
@@ -115,6 +111,7 @@ export default function ReaderSidebar({
               chapterLabel={chapterLabel}
               pendingText={aiPendingText}
               onPendingConsumed={onAiPendingConsumed}
+              onJumpToSource={onJumpToSource}
             />
           </div>
         ) : (

@@ -93,11 +93,15 @@ CREATE TABLE IF NOT EXISTS public.ai_credentials (
   encrypted_key TEXT NOT NULL,
   model TEXT,
   base_url TEXT,
+  -- Which provider the assistant should use. Exactly one row per user should be
+  -- active; the app maintains this when a credential is saved or set active.
+  is_active BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY (user_id, provider)
 );
 -- Migration for existing databases:
 ALTER TABLE public.ai_credentials ADD COLUMN IF NOT EXISTS base_url TEXT;
+ALTER TABLE public.ai_credentials ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT false;
 
 -- Google OAuth credentials (Drive refresh token, captured at sign-in)
 CREATE TABLE IF NOT EXISTS public.google_credentials (
@@ -157,17 +161,27 @@ CREATE TABLE IF NOT EXISTS public.ai_chat_sessions (
   updated_at       TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ai_sessions_book ON public.ai_chat_sessions(user_id, book_id, updated_at DESC);
+-- Migration for databases created before context_summary existed (a missing
+-- column made the messages endpoint error and reopened chats look empty):
+ALTER TABLE public.ai_chat_sessions ADD COLUMN IF NOT EXISTS context_summary TEXT;
 
 -- Individual messages within a session.
 CREATE TABLE IF NOT EXISTS public.ai_chat_messages (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id  UUID NOT NULL REFERENCES public.ai_chat_sessions(id) ON DELETE CASCADE,
   role        TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-  content     TEXT NOT NULL,
-  citations   JSONB DEFAULT '[]',
-  created_at  TIMESTAMPTZ DEFAULT now()
+  content      TEXT NOT NULL,
+  citations    JSONB DEFAULT '[]',
+  quote        TEXT,
+  book_sources JSONB DEFAULT '[]',
+  created_at   TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON public.ai_chat_messages(session_id, created_at ASC);
+-- Migrations for older databases:
+--   quote        — highlighted passage shown above a user message
+--   book_sources — the "From this book" grounding sources (so they survive reload)
+ALTER TABLE public.ai_chat_messages ADD COLUMN IF NOT EXISTS quote TEXT;
+ALTER TABLE public.ai_chat_messages ADD COLUMN IF NOT EXISTS book_sources JSONB DEFAULT '[]';
 
 ALTER TABLE public.ai_chat_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_chat_messages ENABLE ROW LEVEL SECURITY;
@@ -182,4 +196,133 @@ CREATE POLICY "Users manage own ai messages" ON public.ai_chat_messages
       SELECT id FROM public.ai_chat_sessions WHERE user_id = auth.uid()
     )
   );
+
+-- ============================================
+-- RAG: book-grounded AI (full-text search)
+-- The assistant searches the book on demand via a `search_book` tool backed by
+-- Postgres full-text search — no embeddings, so indexing just stores text.
+-- (`vector`/`embedding` are retained from the old embeddings approach but unused.)
+-- ============================================
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- One row per (user, book): indexing status + chunk count.
+CREATE TABLE IF NOT EXISTS public.book_index (
+  user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  book_id      UUID NOT NULL REFERENCES public.books(id) ON DELETE CASCADE,
+  status       TEXT NOT NULL DEFAULT 'indexing'
+               CHECK (status IN ('indexing', 'ready', 'error')),
+  provider     TEXT,
+  model        TEXT,
+  dim          INTEGER,
+  chunk_count  INTEGER NOT NULL DEFAULT 0,
+  error        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  updated_at   TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (user_id, book_id)
+);
+
+-- Book text chunks. `fts` is a generated full-text vector over `content`; the
+-- 'simple' config is language-agnostic tokenization (works for Indonesian/mixed
+-- text). `embedding` is unused now but kept so older DBs don't need a drop.
+CREATE TABLE IF NOT EXISTS public.book_chunks (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  book_id       UUID NOT NULL REFERENCES public.books(id) ON DELETE CASCADE,
+  chunk_index   INTEGER NOT NULL,
+  chapter_label TEXT,
+  cfi           TEXT,
+  content       TEXT NOT NULL,
+  embedding     vector,
+  fts           tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_book_chunks_book
+  ON public.book_chunks(user_id, book_id, chunk_index);
+-- Migration for DBs created under the embeddings approach:
+ALTER TABLE public.book_chunks
+  ADD COLUMN IF NOT EXISTS fts tsvector
+  GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
+CREATE INDEX IF NOT EXISTS idx_book_chunks_fts
+  ON public.book_chunks USING GIN (fts);
+
+ALTER TABLE public.book_index ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.book_chunks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users manage own book index" ON public.book_index
+  FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users manage own book chunks" ON public.book_chunks
+  FOR ALL USING (auth.uid() = user_id);
+
+-- Cosine similarity search within a single book, scoped to the caller.
+-- SECURITY INVOKER (default) + the explicit user_id filter means RLS applies.
+CREATE OR REPLACE FUNCTION public.match_book_chunks(
+  p_book_id UUID,
+  p_query   vector,
+  p_count   INTEGER DEFAULT 6
+)
+RETURNS TABLE (
+  chunk_index   INTEGER,
+  chapter_label TEXT,
+  cfi           TEXT,
+  content       TEXT,
+  similarity    REAL
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    chunk_index,
+    chapter_label,
+    cfi,
+    content,
+    (1 - (embedding <=> p_query))::REAL AS similarity
+  FROM public.book_chunks
+  WHERE book_id = p_book_id
+    AND user_id = auth.uid()
+  ORDER BY embedding <=> p_query
+  LIMIT p_count;
+$$;
+
+-- Full-text search within a single book, scoped to the caller. Backs the
+-- `search_book` tool. Uses OR-matching (any query term) ranked by relevance,
+-- NOT AND — natural-language queries ("siapa komisaris utama perusahaan ini")
+-- carry stopwords/extra words that aren't in the target passage, so requiring
+-- every term to match returns nothing. OR + ts_rank surfaces the best chunks.
+CREATE OR REPLACE FUNCTION public.search_book_chunks(
+  p_book_id UUID,
+  p_query   TEXT,
+  p_count   INTEGER DEFAULT 6
+)
+RETURNS TABLE (
+  chunk_index   INTEGER,
+  chapter_label TEXT,
+  cfi           TEXT,
+  content       TEXT,
+  rank          REAL
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH q AS (
+    -- Build an OR tsquery from the query's lexemes: "a | b | c".
+    SELECT to_tsquery(
+      'simple',
+      array_to_string(tsvector_to_array(to_tsvector('simple', p_query)), ' | ')
+    ) AS query
+  )
+  SELECT
+    bc.chunk_index,
+    bc.chapter_label,
+    bc.cfi,
+    bc.content,
+    ts_rank(bc.fts, q.query)::REAL AS rank
+  FROM public.book_chunks bc, q
+  WHERE bc.book_id = p_book_id
+    AND bc.user_id = auth.uid()
+    AND q.query IS NOT NULL
+    AND bc.fts @@ q.query
+  ORDER BY rank DESC
+  LIMIT p_count;
+$$;
 

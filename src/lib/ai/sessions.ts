@@ -10,6 +10,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: { url: string; title: string }[];
+  quote?: string | null;
+  book_sources?: { chapter: string; cfi: string; snippet: string }[] | null;
   created_at: string;
 }
 
@@ -33,6 +35,42 @@ export async function createSession(bookId: string): Promise<string | null> {
 
 export async function deleteSession(id: string): Promise<void> {
   await fetch(`/api/ai/sessions/${id}`, { method: "DELETE" });
+}
+
+// Persist one chat turn. Called from the client so the write runs as a normal
+// request (the AI stream's own writes were being dropped on Workers).
+export async function saveChatMessage(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  opts?: {
+    citations?: { url: string; title: string }[];
+    quote?: string;
+    bookSources?: { chapter: string; cfi: string; snippet: string }[];
+  },
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/ai/sessions/${sessionId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role,
+        content,
+        citations: opts?.citations,
+        quote: opts?.quote,
+        bookSources: opts?.bookSources,
+      }),
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error("[saveChatMessage] failed", res.status, j.error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("[saveChatMessage] error", e);
+    return false;
+  }
 }
 
 export async function getSessionMessages(

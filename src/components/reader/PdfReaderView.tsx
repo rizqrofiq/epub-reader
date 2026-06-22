@@ -152,6 +152,16 @@ export default function PdfReaderView({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === "PageDown") goNext();
       else if (e.key === "ArrowLeft" || e.key === "PageUp") goPrev();
     };
@@ -159,7 +169,6 @@ export default function PdfReaderView({
     return () => window.removeEventListener("keydown", onKey);
   }, [goNext, goPrev]);
 
-  // Reads the current native text selection and shows the popover.
   const commitSelection = useCallback(() => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) return;
@@ -236,8 +245,8 @@ export default function PdfReaderView({
 
   const visible = isDouble
     ? [page, page + 1 <= numPages ? page + 1 : null].filter(
-        (p): p is number => p != null,
-      )
+      (p): p is number => p != null,
+    )
     : [page];
 
   const availH = Math.max(0, area.h - 32);
@@ -329,10 +338,10 @@ export default function PdfReaderView({
         onAskAI={
           onAskAI
             ? () => {
-                if (selection) onAskAI(selection.text);
-                window.getSelection()?.removeAllRanges();
-                setSelection(null);
-              }
+              if (selection) onAskAI(selection.text);
+              window.getSelection()?.removeAllRanges();
+              setSelection(null);
+            }
             : undefined
         }
         onClose={() => setSelection(null)}
@@ -377,9 +386,6 @@ function PdfPage({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
-  // Holds the active pdf.js render task so we can cancel it before starting
-  // a new one — prevents "Cannot use the same canvas during multiple render()
-  // operations" when availW/availH change (e.g. sidebar opens).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderTaskRef = useRef<any>(null);
 
@@ -387,7 +393,6 @@ function PdfPage({
     if (availW <= 0 || availH <= 0) return;
     let cancelled = false;
 
-    // Cancel any in-flight render immediately before touching the canvas.
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
       renderTaskRef.current = null;
@@ -419,7 +424,6 @@ function PdfPage({
       try {
         await task.promise;
       } catch (err: unknown) {
-        // RenderingCancelledException is expected when we cancel mid-flight.
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("cancelled") || msg.includes("Rendering cancelled")) return;
         throw err;
@@ -434,8 +438,6 @@ function PdfPage({
     })();
     return () => {
       cancelled = true;
-      // Also cancel the render task on cleanup so the next effect run starts
-      // with a clean slate.
       if (renderTaskRef.current) {
         renderTaskRef.current.cancel();
         renderTaskRef.current = null;
@@ -488,10 +490,6 @@ function PdfPage({
   );
 }
 
-// Builds an invisible, selectable text layer over the canvas. Manual (not
-// pdf.js's TextLayer class) so positioning is fully deterministic: inline
-// transparent color guarantees invisibility, and a per-span scaleX corrects
-// width so the selection aligns with the rendered glyphs.
 async function buildTextLayer(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pdfPage: any,
@@ -538,8 +536,6 @@ async function buildTextLayer(
   container.appendChild(frag);
   if (isCancelled()) return;
 
-  // One measure pass, then one write pass — corrects horizontal scale so the
-  // invisible text lines up with the rendered glyphs.
   const actual = spans.map((s) => s.offsetWidth);
   for (let i = 0; i < spans.length; i++) {
     if (actual[i] > 0 && targetWidths[i] > 0) {

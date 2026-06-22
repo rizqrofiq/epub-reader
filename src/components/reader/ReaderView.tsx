@@ -76,9 +76,6 @@ const LINE_HEIGHT_MAP: Record<LineHeight, string> = {
 const MATHJAX_SRC =
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
 
-// Attaches touch listeners inside a chapter iframe so a deliberate horizontal
-// swipe turns the page — without the blocking overlay react-reader's `swipeable`
-// uses, so text selection (highlights) still works.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attachSwipeNavigation(contents: any, rendition: any) {
   const doc: Document | undefined = contents?.document;
@@ -101,7 +98,6 @@ function attachSwipeNavigation(contents: any, rendition: any) {
     const t = e.changedTouches[0];
     if (!t) return;
 
-    // Don't hijack a text selection — that's how highlights are made.
     const sel = win.getSelection?.();
     if (sel && sel.toString().length > 0) return;
 
@@ -109,7 +105,6 @@ function attachSwipeNavigation(contents: any, rendition: any) {
     const dy = t.clientY - startY;
     const dt = e.timeStamp - startT;
 
-    // Quick, mostly-horizontal flick past a threshold.
     if (dt < 600 && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.8) {
       const rtl = rendition?.book?.package?.metadata?.direction === "rtl";
       const goNext = rtl ? dx > 0 : dx < 0;
@@ -122,8 +117,6 @@ function attachSwipeNavigation(contents: any, rendition: any) {
   doc.addEventListener("touchend", onEnd, { passive: true });
 }
 
-// Injected into each chapter iframe to typeset MathML/TeX and keep wide
-// display math from overflowing epub.js's paginated columns.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function injectMathJaxIntoContents(contents: any) {
   const doc: Document | undefined = contents?.document;
@@ -323,8 +316,6 @@ export default function ReaderView({
           "max-width": "100% !important",
           height: "auto !important",
         },
-        // Wide code/terminal blocks must wrap, or they overflow epub.js's
-        // paginated columns and bleed onto the neighbouring page.
         pre: {
           "white-space": "pre-wrap !important",
           "overflow-wrap": "break-word !important",
@@ -349,7 +340,7 @@ export default function ReaderView({
       appliedHlRef.current.forEach((cfi) => {
         try {
           rendition.annotations.remove(cfi, "highlight");
-        } catch {}
+        } catch { }
       });
 
       current.forEach((hl) => {
@@ -366,7 +357,7 @@ export default function ReaderView({
               "mix-blend-mode": "multiply",
             },
           );
-        } catch {}
+        } catch { }
       });
 
       appliedHlRef.current = current.map((hl) => hl.cfi_range);
@@ -443,7 +434,7 @@ export default function ReaderView({
           injectMathJaxIntoContents(c);
           attachSwipeNavigation(c, rendition);
         });
-      } catch {}
+      } catch { }
 
       rendition.book.ready
         .then(() => {
@@ -518,7 +509,7 @@ export default function ReaderView({
           win?.document?.fonts?.ready?.then(() =>
             scheduleRedraw(rendition, 30),
           );
-        } catch {}
+        } catch { }
 
         if (doc?.querySelector("math")) {
           scheduleRedraw(rendition, 600);
@@ -530,7 +521,7 @@ export default function ReaderView({
               scheduleRedraw(rendition, 60),
             );
             ro.observe(doc.body);
-          } catch {}
+          } catch { }
         }
       });
 
@@ -574,7 +565,7 @@ export default function ReaderView({
         }
 
         onProgressUpdate(epubcifi, percentage, chapterLabel);
-      } catch {}
+      } catch { }
     },
     [onLocationChange, onProgressUpdate, renditionRef],
   );
@@ -610,7 +601,6 @@ export default function ReaderView({
   const arrowColor =
     theme === "dark" ? "#666" : theme === "sepia" ? "#8b7355" : "#999";
 
-  // Tighter margins and smaller arrows on phones so text isn't cramped.
   const sideInset = isMobile ? 24 : 50;
   const arrowSize = isMobile ? 28 : 40;
 
@@ -794,9 +784,9 @@ export default function ReaderView({
         onAskAI={
           onAskAI
             ? () => {
-                if (selection) onAskAI(selection.text);
-                setSelection(null);
-              }
+              if (selection) onAskAI(selection.text);
+              setSelection(null);
+            }
             : undefined
         }
         onClose={() => setSelection(null)}

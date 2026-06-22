@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { decryptKey } from "@/lib/ai/crypto";
-import { getProvider, PROVIDERS } from "@/lib/ai/provider";
-
-const PROVIDER_IDS = new Set(PROVIDERS.map((p) => p.id));
+import { isProviderId } from "@/lib/ai/provider";
+import { listModels } from "@/lib/ai/models";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -22,7 +21,7 @@ export async function POST(request: Request) {
     baseUrl?: string;
   };
 
-  if (!provider || !PROVIDER_IDS.has(provider as never)) {
+  if (!provider || !isProviderId(provider)) {
     return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   }
 
@@ -51,8 +50,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const impl = await getProvider(provider);
-    const models = await impl.listModels({ apiKey: key, baseUrl: url });
+    const models = await listModels(provider, { apiKey: key, baseUrl: url });
     return NextResponse.json({ models });
   } catch (err) {
     return NextResponse.json(

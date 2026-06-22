@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { askAI } from "@/lib/ai/client";
+import { askAI, getAiCredentials } from "@/lib/ai/client";
 import {
   getSessions,
   createSession,
   deleteSession,
   getSessionMessages,
+  saveChatMessage,
   type ChatSession,
   type ChatMessage,
 } from "@/lib/ai/sessions";
-import type { Citation } from "@/lib/ai/provider";
+import type { Citation, Grounding, BookSource } from "@/lib/ai/provider";
+import { getProviderMeta } from "@/lib/ai/provider";
+import Markdown from "./Markdown";
+import GroundingBadge from "./GroundingBadge";
+import BookSources from "./BookSources";
 
 interface UIMessage {
   id: string;
@@ -20,6 +25,9 @@ interface UIMessage {
   citations?: Citation[];
   thinking?: boolean;
   error?: string;
+  searching?: boolean; // a web search is running for this (live) answer
+  grounding?: Grounding; // how the finished answer was grounded
+  bookSources?: BookSource[]; // book passages used to ground the answer
 }
 
 interface AiChatTabProps {
@@ -28,6 +36,8 @@ interface AiChatTabProps {
   chapterLabel?: string;
   pendingText?: string | null;
   onPendingConsumed?: () => void;
+  // Jump the reader to a book-source anchor (EPUB CFI or PDF page number).
+  onJumpToSource?: (cfi: string) => void;
 }
 
 type Mode = "explain" | "factcheck" | "ask";
@@ -49,6 +59,7 @@ export default function AiChatTab({
   chapterLabel,
   pendingText,
   onPendingConsumed,
+  onJumpToSource,
 }: AiChatTabProps) {
   const [view, setView] = useState<View>("history");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -62,6 +73,11 @@ export default function AiChatTab({
   >([]);
   const [input, setInput] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  const [webSearch, setWebSearch] = useState(false);
+  const [activeModel, setActiveModel] = useState<{
+    provider: string;
+    model: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
@@ -78,6 +94,22 @@ export default function AiChatTab({
       setSessionsLoading(false);
     });
   }, [bookId]);
+
+  // Surface which model is answering (the active credential).
+  useEffect(() => {
+    getAiCredentials().then((creds) => {
+      const active = creds.find((c) => c.is_active) || creds[0];
+      if (!active) {
+        setActiveModel(null);
+        return;
+      }
+      const meta = getProviderMeta(active.provider);
+      setActiveModel({
+        provider: meta?.label ?? active.provider,
+        model: active.model || meta?.defaultModel || "default",
+      });
+    });
+  }, []);
 
   // Keep a ref to view so the pendingText effect always reads the live value,
   // not a stale closure captured at mount time.
@@ -144,12 +176,28 @@ export default function AiChatTab({
 
     const { messages: dbMessages, contextSummary: summary } = result;
 
-    const uiMessages: UIMessage[] = dbMessages.map((m: ChatMessage) => ({
-      id: m.id,
-      role: m.role,
-      text: m.content,
-      citations: m.citations,
-    }));
+    const uiMessages: UIMessage[] = dbMessages.map((m: ChatMessage) => {
+      const bookSources = m.book_sources ?? undefined;
+      const citations = m.citations;
+      // Grounding isn't stored directly; reconstruct it from what was saved.
+      // Web takes precedence over book, matching the live grounding logic.
+      let grounding: Grounding | undefined;
+      if (m.role === "assistant") {
+        if (citations && citations.length > 0)
+          grounding = { kind: "web", sources: citations.length };
+        else if (bookSources && bookSources.length > 0)
+          grounding = { kind: "book", sources: bookSources.length };
+      }
+      return {
+        id: m.id,
+        role: m.role,
+        text: m.content,
+        quote: m.quote ?? undefined,
+        citations,
+        bookSources,
+        grounding,
+      };
+    });
 
     const historyMessages = dbMessages.map((m: ChatMessage) => ({
       role: m.role as "user" | "assistant",
@@ -241,11 +289,18 @@ export default function AiChatTab({
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
-      // Build history snapshot for this request
-      const currentHistory = [
-        ...history,
-        { role: "user" as const, content: userText },
-      ];
+      // Persist the user's turn immediately over a normal request, so it's saved
+      // even if streaming or the assistant write fails. Include the quoted
+      // passage so it survives a reload.
+      if (userText)
+        void saveChatMessage(activeSessionId, "user", userText, {
+          quote: selectedText || undefined,
+        });
+
+      // Accumulate the assistant reply so we can persist it once complete.
+      let assistantAccum = "";
+      let assistantCitationsLocal: Citation[] | undefined;
+      let assistantBookSourcesLocal: BookSource[] | undefined;
 
       if (mode === "ask") {
         setInput("");
@@ -260,18 +315,38 @@ export default function AiChatTab({
       askAI(
         {
           mode,
-          selectedText: selectedText || userText,
+          // Send the pinned selection as-is. When the user dismisses the
+          // highlight, selectedText is "" and no passage is attached — earlier
+          // this fell back to `userText`, so the question itself got treated as
+          // a pinned passage and the selection could never be cleared.
+          selectedText,
           question: mode === "ask" ? input.trim() : undefined,
           bookTitle,
           chapterLabel,
+          bookId,
           sessionId: activeSessionId,
-          history: currentHistory,
+          // Prior turns only — the server appends this new question. (Sending it
+          // here too would duplicate it.)
+          history,
           contextSummary,
+          webSearch,
         },
         {
-          onText: (chunk) => appendChunk(assistantId, chunk),
-          onCitations: (c) =>
-            finalizeMessage(assistantId, { citations: c, thinking: false }),
+          onText: (chunk) => {
+            assistantAccum += chunk;
+            appendChunk(assistantId, chunk);
+          },
+          onTool: () => finalizeMessage(assistantId, { searching: true }),
+          onGrounding: (g) =>
+            finalizeMessage(assistantId, { grounding: g, searching: false }),
+          onBookSources: (s) => {
+            assistantBookSourcesLocal = s;
+            finalizeMessage(assistantId, { bookSources: s });
+          },
+          onCitations: (c) => {
+            assistantCitationsLocal = c;
+            finalizeMessage(assistantId, { citations: c, thinking: false });
+          },
           onSummary: (s) => setContextSummary(s),
           onError: (e) => {
             finalizeMessage(assistantId, {
@@ -284,22 +359,32 @@ export default function AiChatTab({
           onDone: () => {
             finalizeMessage(assistantId, { thinking: false });
             setLoading(false);
+            // Persist the assistant's full reply now that streaming is done.
+            if (assistantAccum.trim()) {
+              void saveChatMessage(activeSessionId, "assistant", assistantAccum, {
+                citations: assistantCitationsLocal,
+                bookSources: assistantBookSourcesLocal,
+              });
+            }
             // Update session title in list if it was "New chat"
             setSessions((prev) =>
               prev.map((s) =>
                 s.id === activeSessionId && s.title === "New chat"
                   ? {
-                      ...s,
-                      title: userText.slice(0, 60),
-                      updated_at: new Date().toISOString(),
-                    }
+                    ...s,
+                    title: userText.slice(0, 60),
+                    updated_at: new Date().toISOString(),
+                  }
                   : s,
               ),
             );
-            // Append to history so next message includes this exchange
+            // Append BOTH turns so the next message has the full exchange.
+            // (Previously only the user turn was added, so the model saw a pile
+            // of unanswered questions and replied to the wrong one.)
             setHistory((prev) => [
               ...prev,
               { role: "user", content: userText },
+              { role: "assistant", content: assistantAccum },
             ]);
           },
         },
@@ -313,8 +398,10 @@ export default function AiChatTab({
       selectedText,
       bookTitle,
       chapterLabel,
+      bookId,
       history,
       contextSummary,
+      webSearch,
     ],
   );
 
@@ -403,11 +490,10 @@ export default function AiChatTab({
                 onClick={() => {
                   if (!loadingSessionId) openSession(session);
                 }}
-                className={`group flex items-center gap-3 px-4 py-3 transition-all cursor-pointer ${
-                  loadingSessionId === session.id
-                    ? "opacity-60"
-                    : "hover:bg-white/5"
-                }`}
+                className={`group flex items-center gap-3 px-4 py-3 transition-all cursor-pointer ${loadingSessionId === session.id
+                  ? "opacity-60"
+                  : "hover:bg-white/5"
+                  }`}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white/80 truncate">
@@ -548,12 +634,26 @@ export default function AiChatTab({
                           {msg.error}
                         </p>
                       ) : (
-                        <div className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">
-                          {msg.text}
+                        <div className="text-sm text-white/80 leading-relaxed">
+                          <Markdown>{msg.text}</Markdown>
                           {loading && isLastMessage(msg.id) && (
                             <span className="inline-block w-0.5 h-4 ml-0.5 bg-[#3ECF8E]/60 animate-pulse align-text-bottom" />
                           )}
                         </div>
+                      )}
+                      {!msg.error && (msg.grounding || msg.searching) && (
+                        <div className="mt-2">
+                          <GroundingBadge
+                            grounding={msg.grounding}
+                            searching={msg.searching}
+                          />
+                        </div>
+                      )}
+                      {msg.bookSources && msg.bookSources.length > 0 && (
+                        <BookSources
+                          sources={msg.bookSources}
+                          onJumpToSource={onJumpToSource}
+                        />
                       )}
                       {msg.citations && msg.citations.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-white/8 space-y-1.5">
@@ -626,6 +726,37 @@ export default function AiChatTab({
             </button>
           </div>
         )}
+        <div className="flex items-center gap-2 pt-2">
+          {activeModel && (
+            <span
+              className="flex items-center gap-1 min-w-0 text-[11px] text-white/35"
+              title={`Answering with ${activeModel.provider} · ${activeModel.model}`}
+            >
+              <span className="material-symbols-rounded !text-[13px] text-white/30 flex-shrink-0">
+                smart_toy
+              </span>
+              <span className="truncate">{activeModel.model}</span>
+            </span>
+          )}
+          <button
+            onClick={() => setWebSearch((v) => !v)}
+            disabled={loading}
+            title={
+              webSearch
+                ? "Web search is on — answers can search the web and cite sources"
+                : "Web search is off — turn on to let answers search the web"
+            }
+            className={`ml-auto flex items-center gap-1.5 flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] border transition-colors cursor-pointer disabled:opacity-40 ${webSearch
+              ? "bg-[#3ECF8E]/15 border-[#3ECF8E]/40 text-[#3ECF8E]"
+              : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"
+              }`}
+          >
+            <span className="material-symbols-rounded !text-[14px]">
+              travel_explore
+            </span>
+            Web search
+          </button>
+        </div>
         <div className="flex items-center gap-2 px-3 py-2 rounded-sm bg-white/5 border border-white/10 focus-within:border-white/20 transition-colors">
           <textarea
             ref={textareaRef}

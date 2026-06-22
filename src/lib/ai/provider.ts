@@ -1,19 +1,46 @@
-// Provider-agnostic seam. Claude is implemented now; other providers can add a
-// module exporting the same AIProvider shape and register in `getProvider`.
+// Provider-agnostic seam. Every provider is driven through the Vercel AI SDK
+// (`streamText`), so adding one means: a registry entry (`registry.ts`, the SDK
+// wiring), a behavioral entry below, and a fallback model list (`catalog.ts`).
+
+import { MODEL_CATALOG } from "./catalog";
 
 export interface Citation {
   url: string;
   title: string;
 }
 
+// Wire format sent to the browser over SSE. Unchanged across providers.
 export type AIStreamEvent =
   | { type: "text"; text: string }
   | { type: "thinking" }
+  // A provider-executed tool ran (e.g. native web search). Used to tell whether
+  // an answer was grounded in a real search vs. the model's own knowledge.
+  | { type: "tool"; name: string }
   | { type: "citations"; citations: Citation[] }
   | { type: "done" }
   | { type: "error"; error: string };
 
+// How an answer was grounded, surfaced to the user as a badge.
+// "web" — a web search ran; "book" — retrieved from the indexed book text;
+// "passage" — answered with the highlighted passage as context, no search;
+// "model" — none of the above, i.e. the model's own knowledge.
+export type GroundingKind = "web" | "book" | "passage" | "model";
+
+export interface Grounding {
+  kind: GroundingKind;
+  sources: number;
+}
+
+export interface BookSource {
+  chapter: string;
+  cfi: string;
+  snippet: string;
+}
+
+export type ProviderId = "anthropic" | "openai" | "google" | "compatible";
+
 export interface AskParams {
+  providerId: ProviderId;
   apiKey: string;
   baseUrl?: string;
   model: string;
@@ -23,60 +50,59 @@ export interface AskParams {
   effort?: "low" | "medium" | "high";
 }
 
-export interface ListModelsParams {
-  apiKey: string;
-  baseUrl?: string;
-}
-
-export interface AIProvider {
-  streamAnswer(params: AskParams): AsyncGenerator<AIStreamEvent>;
-  listModels(params: ListModelsParams): Promise<{ id: string; label: string }[]>;
-}
-
-export type ProviderId = "anthropic" | "openai";
-
-export const PROVIDERS: {
+export interface ProviderMeta {
   id: ProviderId;
   label: string;
   models: { id: string; label: string }[];
   defaultModel: string;
   keyHint: string;
-}[] = [
+  requiresBaseUrl: boolean;
+  supportsWebSearch: boolean;
+}
+
+const PROVIDER_BEHAVIOR: Omit<ProviderMeta, "models" | "defaultModel">[] = [
   {
     id: "anthropic",
     label: "Anthropic (Claude)",
-    models: [
-      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    ],
-    defaultModel: "claude-opus-4-8",
     keyHint: "sk-ant-...",
+    requiresBaseUrl: false,
+    supportsWebSearch: true,
   },
   {
     id: "openai",
     label: "OpenAI (GPT)",
-    models: [
-      { id: "gpt-5", label: "GPT-5" },
-      { id: "gpt-4.1", label: "GPT-4.1" },
-      { id: "gpt-4o", label: "GPT-4o" },
-    ],
-    defaultModel: "gpt-5",
     keyHint: "sk-...",
+    requiresBaseUrl: false,
+    supportsWebSearch: true,
+  },
+  {
+    id: "google",
+    label: "Google (Gemini)",
+    keyHint: "AIza...",
+    requiresBaseUrl: false,
+    supportsWebSearch: true,
+  },
+  {
+    id: "compatible",
+    label: "OpenAI-compatible (OpenRouter, Groq, local…)",
+    keyHint: "Provider API key",
+    requiresBaseUrl: true,
+    supportsWebSearch: false,
   },
 ];
 
-export async function getProvider(id: string): Promise<AIProvider> {
-  switch (id) {
-    case "anthropic": {
-      const { anthropicProvider } = await import("./providers/anthropic");
-      return anthropicProvider;
-    }
-    case "openai": {
-      const { openaiProvider } = await import("./providers/openai");
-      return openaiProvider;
-    }
-    default:
-      throw new Error(`Unsupported provider: ${id}`);
-  }
+export const PROVIDERS: ProviderMeta[] = PROVIDER_BEHAVIOR.map((p) => ({
+  ...p,
+  models: MODEL_CATALOG[p.id].models,
+  defaultModel: MODEL_CATALOG[p.id].defaultModel,
+}));
+
+export const PROVIDER_IDS = new Set<string>(PROVIDERS.map((p) => p.id));
+
+export function getProviderMeta(id: string): ProviderMeta | undefined {
+  return PROVIDERS.find((p) => p.id === id);
+}
+
+export function isProviderId(id: string): id is ProviderId {
+  return PROVIDER_IDS.has(id);
 }

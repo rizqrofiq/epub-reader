@@ -25,12 +25,9 @@ function DashboardPageInner() {
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
-  // Computed after mount to avoid an SSR/client time-of-day hydration mismatch.
   const [greeting, setGreeting] = useState("Welcome");
   const [categorizingBook, setCategorizingBook] = useState<Book | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  // Entrance animation should play once on first load — not replay on every
-  // search/filter/refetch, which is what caused the "wave" blink.
   const [showEntrance, setShowEntrance] = useState(true);
 
   const {
@@ -75,7 +72,6 @@ function DashboardPageInner() {
       }
 
       if (!user) {
-        // Offline: show the cached library instead of bouncing to /auth.
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           await loadFromCache();
           return;
@@ -94,7 +90,7 @@ function DashboardPageInner() {
       ]);
       setBooks(booksData);
       setStats(statsData);
-      cacheBooks(booksData).catch(() => {});
+      cacheBooks(booksData).catch(() => { });
 
       getCachedCovers()
         .then((cached) => {
@@ -106,14 +102,14 @@ function DashboardPageInner() {
             ),
           );
         })
-        .catch(() => {});
+        .catch(() => { });
 
       getBookCovers(supabase, user.id)
         .then((covers) => {
           setBooks((prev) =>
             prev.map((b) => ({ ...b, cover_url: covers[b.id] ?? null })),
           );
-          setCachedCovers(covers).catch(() => {});
+          setCachedCovers(covers).catch(() => { });
         })
         .catch((err) => console.error("Failed to load covers:", err));
     } catch (err) {
@@ -342,21 +338,19 @@ function DashboardPageInner() {
             <div className="flex h-10 rounded-sm border border-border overflow-hidden flex-shrink-0">
               <button
                 onClick={() => setViewMode("grid")}
-                className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer ${
-                  viewMode === "grid"
-                    ? "bg-accent/15 text-accent"
-                    : "text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated"
-                }`}
+                className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer ${viewMode === "grid"
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated"
+                  }`}
               >
                 <span className="material-symbols-rounded sm">grid_view</span>
               </button>
               <button
                 onClick={() => setViewMode("list")}
-                className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer border-l border-border/50 ${
-                  viewMode === "list"
-                    ? "bg-accent/15 text-accent"
-                    : "text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated"
-                }`}
+                className={`flex items-center justify-center w-10 h-full transition-all duration-200 cursor-pointer border-l border-border/50 ${viewMode === "list"
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated"
+                  }`}
               >
                 <span className="material-symbols-rounded sm">view_list</span>
               </button>
@@ -393,11 +387,10 @@ function DashboardPageInner() {
                     onClick={() =>
                       setActiveShelf(activeShelf === shelf ? null : shelf)
                     }
-                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${
-                      activeShelf === shelf
-                        ? "bg-accent text-bg-primary border-accent"
-                        : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
-                    }`}
+                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${activeShelf === shelf
+                      ? "bg-accent text-bg-primary border-accent"
+                      : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
+                      }`}
                   >
                     <span className="material-symbols-rounded !text-[14px]">
                       shelves
@@ -417,11 +410,10 @@ function DashboardPageInner() {
                   <button
                     key={tag}
                     onClick={() => toggleTag(tag)}
-                    className={`px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${
-                      activeTags.includes(tag)
-                        ? "bg-accent/20 text-accent border-accent/40"
-                        : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
-                    }`}
+                    className={`px-3 py-1 rounded-full text-xs border transition-all duration-200 cursor-pointer ${activeTags.includes(tag)
+                      ? "bg-accent/20 text-accent border-accent/40"
+                      : "bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary"
+                      }`}
                   >
                     {tag}
                   </button>

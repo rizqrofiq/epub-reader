@@ -6,6 +6,7 @@ import {
   getAiCredentials,
   saveAiCredential,
   deleteAiCredential,
+  activateAiProvider,
   fetchModels,
 } from "@/lib/ai/client";
 import ModelCombobox from "./ModelCombobox";
@@ -24,7 +25,12 @@ export default function AiSettingsModal({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [configured, setConfigured] = useState<
-    { provider: string; model: string | null; base_url: string | null }[]
+    {
+      provider: string;
+      model: string | null;
+      base_url: string | null;
+      is_active?: boolean;
+    }[]
   >([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,17 +92,37 @@ export default function AiSettingsModal({
   if (!isOpen) return null;
 
   const isConfigured = configured.some((c) => c.provider === provider);
+  const isActive = configured.some(
+    (c) => c.provider === provider && c.is_active,
+  );
+
+  const handleSetActive = async () => {
+    setError(null);
+    const { ok, error: e } = await activateAiProvider(provider);
+    if (!ok) {
+      setError(e || "Failed to set active");
+      return;
+    }
+    setConfigured(await getAiCredentials());
+  };
 
   const handleSave = async () => {
-    if (!apiKey.trim()) {
+    const key = apiKey.trim();
+    // A key is only required the first time a provider is set up. When it's
+    // already configured, an empty key means "update model/base URL only".
+    if (!key && !isConfigured) {
       setError("Enter your API key.");
+      return;
+    }
+    if (meta.requiresBaseUrl && !baseUrl.trim()) {
+      setError("This provider needs a Base URL (e.g. https://openrouter.ai/api/v1).");
       return;
     }
     setSaving(true);
     setError(null);
     const { ok, error: saveError } = await saveAiCredential(
       provider,
-      apiKey.trim(),
+      key,
       model,
       baseUrl.trim() || undefined,
     );
@@ -189,6 +215,27 @@ export default function AiSettingsModal({
                 expand_more
               </span>
             </div>
+            {isConfigured &&
+              (isActive ? (
+                <span className="flex items-center gap-1 text-[11px] text-accent">
+                  <span className="material-symbols-rounded !text-[13px]">
+                    check_circle
+                  </span>
+                  Active — used for answers
+                </span>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-text-tertiary">
+                    Configured, not active
+                  </span>
+                  <button
+                    onClick={handleSetActive}
+                    className="text-[11px] text-accent hover:opacity-80 transition-opacity cursor-pointer"
+                  >
+                    Use this provider
+                  </button>
+                </div>
+              ))}
           </div>
 
           <div className="space-y-1.5">

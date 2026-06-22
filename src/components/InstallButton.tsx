@@ -23,7 +23,6 @@ export default function InstallButton() {
     const onInstalled = () => setDeferred(null);
     window.addEventListener("appinstalled", onInstalled);
 
-    // iOS Safari never fires beforeinstallprompt — detect it to show a hint.
     const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const standalone =
